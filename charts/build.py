@@ -20,7 +20,10 @@ def build_valuation_chart(val_df: pd.DataFrame) -> go.Figure | None:
     if val_df.empty or len(val_df) < 10:
         return None
     vpi = compute_valuation_pressure_index(val_df)
-    vpi_rebase = (vpi / vpi.iloc[0]) * 100 if vpi.iloc[0] != 0 else vpi
+    if vpi.empty:
+        return None
+    base = vpi.iloc[0]
+    vpi_rebase = (vpi / base) * 100 if base != 0 else vpi
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=vpi_rebase.index, y=vpi_rebase.values, mode="lines",

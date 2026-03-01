@@ -17,9 +17,9 @@ def prepare_rotation_curves(ratios_df: pd.DataFrame, base_date: str | None = Non
     """
     if ratios_df.empty:
         return ratios_df
-    out = ratios_df.copy()
-    for col in out.columns:
-        s = out[col].dropna()
+    out = pd.DataFrame(index=ratios_df.index)
+    for col in ratios_df.columns:
+        s = ratios_df[col].dropna()
         if s.empty:
             continue
         if base_date is not None and base_date in s.index:
@@ -28,5 +28,8 @@ def prepare_rotation_curves(ratios_df: pd.DataFrame, base_date: str | None = Non
             base_val = s.iloc[0]
         if base_val == 0:
             continue
-        out[col] = (s / base_val) * 100
-    return out.ffill().dropna(how="all")
+        # Assign rebased values only on s.index to avoid index alignment filling gaps with NaN then ffill
+        rebased = (s / base_val) * 100
+        out[col] = rebased
+    out = out.dropna(how="all")
+    return out
