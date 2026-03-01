@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Macro Dashboard — Regime & rotation analytics</title>
+  <meta name="description" content="Private macro dashboard: valuation pressure, risk composite, allocation thermostat, and cross-asset rotation. FRED + Yahoo Finance. Newsletter-ready charts.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <a href="#" class="logo">Macro Dashboard</a>
+      <nav class="nav">
+        <a href="#features">Features</a>
+        <a href="#run">Run it</a>
+        <a href="https://github.com" class="btn btn-ghost" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <p class="hero-tag">Private · Local-first · Newsletter-ready</p>
+        <h1>Macro regime &<br>rotation analytics</h1>
+        <p class="hero-desc">
+          Four analytical models: valuation pressure, macro risk composite, allocation thermostat, and risk cascade curves. 
+          Built for portfolio exposure decisions and Substack-ready charts.
+        </p>
+        <div class="hero-actions">
+          <a href="https://github.com" class="btn btn-primary" target="_blank" rel="noopener">View on GitHub</a>
+          <a href="#run" class="btn btn-secondary">How to run</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="features">
+      <div class="container">
+        <h2>What it does</h2>
+        <div class="grid">
+          <article class="card">
+            <span class="card-num">01</span>
+            <h3>Valuation Pressure Index</h3>
+            <p>Macro-driven valuation compression on equities. Formula: (SPX/UNRATE²)×Inflation×FedFunds / M2. Rising = tightening; falling = easing.</p>
+          </article>
+          <article class="card">
+            <span class="card-num">02</span>
+            <h3>Macro Risk Dashboard</h3>
+            <p>Raw standardized composite + ROC for acceleration. Pillars: GDP, unemployment, inflation, NFCI, Fed liquidity, HY spread. Rising = deterioration.</p>
+          </article>
+          <article class="card">
+            <span class="card-num">03</span>
+            <h3>Risk Thermostat (0–100)</h3>
+            <p>Allocation guide: Risk-on → Neutral → De-risk → Defensive → Capital preservation. Actionable exposure levels from macro risk.</p>
+          </article>
+          <article class="card">
+            <span class="card-num">04</span>
+            <h3>Risk Cascade Curves</h3>
+            <p>Relative strength ratios (ALT/BTC, BTC/SPY, IWM/SPY, HYG/IEF, XLU/SPY). See which asset class breaks first during risk escalation.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="run" class="run">
+      <div class="container">
+        <h2>Run it yourself</h2>
+        <p class="run-desc">Local-first. No recurring cost. Data from FRED (free API key) and Yahoo Finance.</p>
+        <div class="code-block">
+          <code>git clone https://github.com/your-username/RiskCycle.git</code><br>
+          <code>cd RiskCycle && pip install -r requirements.txt</code><br>
+          <code># Add FRED_API_KEY to .env, then:</code><br>
+          <code>streamlit run app.py</code>
+        </div>
+        <p class="run-note">Optional: schedule Tue/Fri refresh with Windows Task Scheduler to export PNGs to <code>exports/latest/</code>.</p>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="container">
+        <p>Macro Dashboard · FRED + Yahoo Finance · Export PNG for newsletter</p>
+        <p><a href="https://github.com" target="_blank" rel="noopener">GitHub</a></p>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

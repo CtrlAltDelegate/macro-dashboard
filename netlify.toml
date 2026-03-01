@@ -1,0 +1,5 @@
+# Netlify: build writes landing page into public/ (works even if landing/ wasn't pushed).
+# The live dashboard runs locally or on Streamlit Community Cloud.
+[build]
+  command = "python scripts/build_landing.py"
+  publish = "public"

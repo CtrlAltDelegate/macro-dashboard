@@ -1,0 +1,17 @@
+# Macro Dashboard — dark theme aligned with chart styling
+[theme]
+primaryColor = "#58a6ff"
+backgroundColor = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#e6edf3"
+font = "sans serif"
+
+[theme.sidebar]
+backgroundColor = "#161b22"
+textColor = "#e6edf3"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
