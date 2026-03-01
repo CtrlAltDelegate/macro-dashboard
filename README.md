@@ -22,7 +22,8 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 1. **Clone / open project**, then:
 
    ```bash
-   cd RiskCycle
+   git clone https://github.com/CtrlAltDelegate/macro-dashboard.git
+   cd macro-dashboard
    pip install -r requirements.txt
    ```
 
@@ -35,11 +36,13 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
      ```
    - Or set the `FRED_API_KEY` environment variable.
 
-3. **Run the dashboard**:
+3. **Run the dashboard** (from the project root, i.e. the folder that contains `app.py`):
 
    ```bash
    streamlit run app.py
    ```
+
+   Or run `python run_app.py` from anywhere inside the repo—it switches to the project root first.
 
    Open the URL shown (e.g. http://localhost:8501). Use **Refresh data** in the sidebar to refetch; each chart has an **Export chart as PNG** button.
 
@@ -65,6 +68,14 @@ Or run `scripts\refresh.ps1` from the project root. Output:
 
 - **Macro**: FRED (St. Louis Fed) — free with API key.
 - **Rotation (Chart 4)**: Yahoo Finance — no key required.
+
+## Troubleshooting
+
+- **"Main module does not exist" / FileNotFoundError when running Streamlit**  
+  Streamlit must run with the **project root** as the current directory (the folder that contains `app.py`). From a terminal, `cd` into the cloned repo (e.g. `cd macro-dashboard`) and run `streamlit run app.py` there. Or use `python run_app.py`, which changes to the project root for you.
+
+- **Streamlit Community Cloud**  
+  Deploy from this repo; set **Main file path** to `app.py` and leave the app root as the repo root. Add `FRED_API_KEY` in the Cloud dashboard under Secrets.
 
 ## GitHub + Netlify
 
