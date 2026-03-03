@@ -75,7 +75,14 @@ Or run `scripts\refresh.ps1` from the project root. Output:
   Streamlit must run with the **project root** as the current directory (the folder that contains `app.py`). From a terminal, `cd` into the cloned repo (e.g. `cd macro-dashboard`) and run `streamlit run app.py` there. Or use `python run_app.py`, which changes to the project root for you.
 
 - **Streamlit Community Cloud — "directory … does not exist"**  
-  The repo has **no subfolder** named `RiskCycle`. `app.py` is at the **root** of the repo. In Streamlit Cloud → your app → **Settings**: set **Main file path** to **`app.py`** (not `RiskCycle/app.py`). Leave **App root** blank or as the repo root. Add `FRED_API_KEY` under **Secrets**.
+  The repo has **no subfolder** named `RiskCycle`. `app.py` is at the **root** of the repo. In Streamlit Cloud → your app → **Settings**: set **Main file path** to **`app.py`** (not `RiskCycle/app.py`). Leave **App root** blank or as the repo root. Add `FRED_API_KEY` under **Secrets** (see below).
+
+- **Streamlit Cloud: FRED key in Secrets but app still says "not set"**  
+  In **Settings → Secrets**, use a **root-level** key (no section). Example:
+  ```toml
+  FRED_API_KEY = "your_actual_key_here"
+  ```
+  Not under `[api]` or similar. The app reads from `st.secrets["FRED_API_KEY"]` and sets the env var so the data layer can use it. Save, then **Reboot** the app so it picks up the secret.
 
 ## GitHub + Netlify
 

@@ -4,12 +4,24 @@ Macro Dashboard — Private, local-first. Run: streamlit run app.py
 from __future__ import annotations
 
 import io
+import os
 
 import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
 import streamlit as st
+
+# Streamlit Cloud: secrets in st.secrets; put FRED_API_KEY into env so config/data layers see it
+try:
+    if hasattr(st, "secrets"):
+        val = getattr(st.secrets, "get", lambda k: None)("FRED_API_KEY") or getattr(st.secrets, "FRED_API_KEY", None)
+        if not val and "FRED_API_KEY" in st.secrets:
+            val = st.secrets["FRED_API_KEY"]
+        if val:
+            os.environ.setdefault("FRED_API_KEY", str(val))
+except Exception:
+    pass
 
 import config
 from charts.build import (
@@ -93,10 +105,24 @@ st.markdown("# Macro Dashboard")
 st.markdown('<p class="subtitle">Valuation pressure · Macro risk · Risk thermostat · Rotation</p>', unsafe_allow_html=True)
 
 if not config.FRED_API_KEY:
+    # Brief diagnostic (no secret values): helps debug Streamlit Cloud Secrets
+    has_secrets = fred_in_secrets = False
+    try:
+        if hasattr(st, "secrets"):
+            keys = getattr(st.secrets, "keys", None)
+            secret_keys = list(keys()) if keys else []
+            has_secrets = len(secret_keys) > 0
+            fred_in_secrets = "FRED_API_KEY" in secret_keys
+    except Exception:
+        pass
     st.warning(
         "Set **FRED_API_KEY** in your environment (or `.env`) to load macro data. "
         "[Get a free key](https://fred.stlouisfed.org/docs/api/api_key.html)."
     )
+    with st.expander("Diagnostic (no keys shown)"):
+        st.write(f"- Secrets available: **{has_secrets}**")
+        st.write(f"- `FRED_API_KEY` in Secrets: **{fred_in_secrets}**")
+        st.write("If you added the key in Streamlit Cloud but this still shows False, **push this repo** so the app runs the code that reads `st.secrets`, then Reboot the app.")
 
 # Sidebar: refresh and lookback
 with st.sidebar:
