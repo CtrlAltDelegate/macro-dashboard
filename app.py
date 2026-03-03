@@ -143,7 +143,10 @@ def load_all(lookback: str):
     rot_period = config.lookback_to_rotation_period(lookback)
     val_df = fetch_valuation_data(observation_start=obs_start)
     risk_df = fetch_macro_risk_data(observation_start=obs_start)
-    rot_df = fetch_rotation_data(period=rot_period)
+    try:
+        rot_df = fetch_rotation_data(period=rot_period)
+    except Exception:
+        rot_df = pd.DataFrame()
     return val_df, risk_df, rot_df
 
 try:
