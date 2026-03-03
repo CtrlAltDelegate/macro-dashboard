@@ -122,7 +122,8 @@ if not config.FRED_API_KEY:
     with st.expander("Diagnostic (no keys shown)"):
         st.write(f"- Secrets available: **{has_secrets}**")
         st.write(f"- `FRED_API_KEY` in Secrets: **{fred_in_secrets}**")
-        st.write("If you added the key in Streamlit Cloud but this still shows False, **push this repo** so the app runs the code that reads `st.secrets`, then Reboot the app.")
+        st.write("The API key is used **on the server** (Streamlit Cloud). The browser console (F12) will not show FRED key errors—check this diagnostic and the **Streamlit Cloud logs** (deploy/runtime) instead.")
+        st.write("If you added the key in Streamlit Cloud but this still shows False, **push this repo**, then **Reboot** the app.")
 
 # Sidebar: refresh and lookback
 with st.sidebar:

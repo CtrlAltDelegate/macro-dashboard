@@ -49,6 +49,17 @@ def lookback_to_rotation_period(lookback: str) -> str:
 # FRED API (free key: https://fred.stlouisfed.org/docs/api/api_key.html)
 # ---------------------------------------------------------------------------
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+if not FRED_API_KEY:
+    try:
+        import streamlit as _st
+        if hasattr(_st, "secrets"):
+            _val = getattr(_st.secrets, "get", lambda k: None)("FRED_API_KEY")
+            if not _val and "FRED_API_KEY" in _st.secrets:
+                _val = _st.secrets["FRED_API_KEY"]
+            if _val:
+                FRED_API_KEY = str(_val)
+    except Exception:
+        pass
 
 # Chart 1 — Valuation Pressure Index
 FRED_VALUATION = {
