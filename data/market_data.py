@@ -3,10 +3,17 @@ Market/ETF/crypto data for Chart 4 — Risk Cascade (rotation). Uses Yahoo Finan
 """
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import yfinance as yf
 
 import config
+
+try:
+    from yfinance.exceptions import YFRateLimitError
+except ImportError:
+    YFRateLimitError = type("YFRateLimitError", (Exception,), {})  # no-op if missing
 
 
 def fetch_rotation_data(
@@ -25,15 +32,34 @@ def fetch_rotation_data(
         tickers.add(b)
     tickers = sorted(tickers)
 
-    data = yf.download(
-        tickers,
-        period=period,
-        interval=interval,
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
-    )
+    try:
+        data = yf.download(
+            tickers,
+            period=period,
+            interval=interval,
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=False,  # gentler on Yahoo; avoids rate limit when possible
+        )
+    except (YFRateLimitError, Exception) as e:
+        # Rate limited: retry once after a short delay
+        if isinstance(e, YFRateLimitError) or "rate" in str(e).lower() or "429" in str(e):
+            time.sleep(3)
+            try:
+                data = yf.download(
+                    tickers,
+                    period=period,
+                    interval=interval,
+                    group_by="ticker",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=False,
+                )
+            except Exception:
+                return pd.DataFrame()
+        else:
+            return pd.DataFrame()
 
     if data.empty:
         return pd.DataFrame()

@@ -24,6 +24,10 @@ except Exception:
     pass
 
 import config
+
+# Server-side log: appears in Streamlit Cloud "Manage app" → Logs (not in browser console)
+print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}")
+
 from charts.build import (
     build_valuation_chart,
     build_macro_risk_chart,
@@ -122,8 +126,8 @@ if not config.FRED_API_KEY:
     with st.expander("Diagnostic (no keys shown)"):
         st.write(f"- Secrets available: **{has_secrets}**")
         st.write(f"- `FRED_API_KEY` in Secrets: **{fred_in_secrets}**")
-        st.write("The API key is used **on the server** (Streamlit Cloud). The browser console (F12) will not show FRED key errors—check this diagnostic and the **Streamlit Cloud logs** (deploy/runtime) instead.")
-        st.write("If you added the key in Streamlit Cloud but this still shows False, **push this repo**, then **Reboot** the app.")
+        st.write("**Where to see server logs:** On your app page, click **Manage app** (bottom-right). In the panel that opens, check the **Logs** tab. You should see a line like `[Macro Dashboard] FRED_API_KEY set: True/False` when the app runs—that’s the server-side truth. (Browser Console / F12 is client-side and will not show this.)")
+        st.write("If the log says `False` or you don’t see that line, push this repo, add the key in Settings → Secrets as `FRED_API_KEY = \"...\"`, then **Reboot** the app.")
 
 # Sidebar: refresh and lookback
 with st.sidebar:
