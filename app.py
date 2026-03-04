@@ -37,6 +37,20 @@ from charts.build import (
 from data import fetch_valuation_data, fetch_macro_risk_data, fetch_rotation_data
 from models import compute_macro_risk_composite, compute_risk_thermostat
 
+
+def _try_export_png(fig):
+    """Export Plotly figure to PNG bytes. Returns (bytes, None) or (None, error_msg).
+    On Streamlit Cloud, Kaleido requires Chrome which is not installed, so we skip export gracefully.
+    """
+    try:
+        buf = io.BytesIO()
+        fig.write_image(buf, format="png", scale=2)
+        buf.seek(0)
+        return buf.getvalue(), None
+    except Exception as e:
+        return None, str(e)
+
+
 st.set_page_config(
     page_title="Macro Dashboard",
     page_icon="📊",
@@ -163,10 +177,10 @@ st.markdown(
 )
 fig1 = build_valuation_chart(val_df)
 if fig1 is not None:
-    st.plotly_chart(fig1, use_container_width=True, key="vpi")
-    buf1 = io.BytesIO()
-    fig1.write_image(buf1, format="png", scale=2)
-    st.download_button("Export PNG", data=buf1.getvalue(), file_name="01_valuation_pressure_index.png", mime="image/png", key="dl_vpi")
+    st.plotly_chart(fig1, width="stretch", key="vpi")
+    png1, _ = _try_export_png(fig1)
+    if png1 is not None:
+        st.download_button("Export PNG", data=png1, file_name="01_valuation_pressure_index.png", mime="image/png", key="dl_vpi")
 else:
     st.info("Not enough valuation data. Check FRED_API_KEY and series availability.")
 
@@ -178,10 +192,10 @@ st.markdown(
 )
 fig2 = build_macro_risk_chart(risk_df)
 if fig2 is not None:
-    st.plotly_chart(fig2, use_container_width=True, key="macro_risk")
-    buf2 = io.BytesIO()
-    fig2.write_image(buf2, format="png", scale=2)
-    st.download_button("Export PNG", data=buf2.getvalue(), file_name="02_macro_risk_raw_roc.png", mime="image/png", key="dl_macro")
+    st.plotly_chart(fig2, width="stretch", key="macro_risk")
+    png2, _ = _try_export_png(fig2)
+    if png2 is not None:
+        st.download_button("Export PNG", data=png2, file_name="02_macro_risk_raw_roc.png", mime="image/png", key="dl_macro")
 else:
     st.info("Not enough macro risk data.")
 
@@ -196,16 +210,16 @@ if fig3 is not None:
     raw = compute_macro_risk_composite(risk_df)
     thermo = compute_risk_thermostat(raw)
     latest = thermo.iloc[-1] if not thermo.empty else 0
-    st.plotly_chart(fig3, use_container_width=True, key="thermo")
+    st.plotly_chart(fig3, width="stretch", key="thermo")
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Current reading", f"{latest:.0f}", "0–100 scale")
     with col2:
         zone = "Risk-on" if latest < 25 else "Neutral" if latest < 50 else "De-risk high beta" if latest < 70 else "Defensive rotation" if latest < 85 else "Capital preservation"
         st.metric("Zone", zone, "")
-    buf3 = io.BytesIO()
-    fig3.write_image(buf3, format="png", scale=2)
-    st.download_button("Export PNG", data=buf3.getvalue(), file_name="03_risk_thermostat.png", mime="image/png", key="dl_thermo")
+    png3, _ = _try_export_png(fig3)
+    if png3 is not None:
+        st.download_button("Export PNG", data=png3, file_name="03_risk_thermostat.png", mime="image/png", key="dl_thermo")
 else:
     st.info("Requires macro risk data.")
 
@@ -217,10 +231,10 @@ st.markdown(
 )
 fig4 = build_rotation_chart(rot_df)
 if fig4 is not None:
-    st.plotly_chart(fig4, use_container_width=True, key="rotation")
-    buf4 = io.BytesIO()
-    fig4.write_image(buf4, format="png", scale=2)
-    st.download_button("Export PNG", data=buf4.getvalue(), file_name="04_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
+    st.plotly_chart(fig4, width="stretch", key="rotation")
+    png4, _ = _try_export_png(fig4)
+    if png4 is not None:
+        st.download_button("Export PNG", data=png4, file_name="04_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
 else:
     st.info("Rotation data (Yahoo Finance) could not be loaded.")
 
