@@ -495,6 +495,14 @@ if pdf_available() and build_dashboard_pdf:
         _readout += f"Financial conditions: {fci_status}. "
     if credit_status:
         _readout += f"Credit stress: {credit_status}."
+    # Diagnose why chart export might fail (so user sees the real error)
+    _pdf_export_error = None
+    for _fig in (fig_liquidity, fig1, fig2, fig_yield, fig_fci, fig_credit, fig3, fig4):
+        if _fig is not None:
+            _, _err = _try_export_png(_fig)
+            if _err is not None:
+                _pdf_export_error = _err
+            break
     try:
         pdf_bytes = build_dashboard_pdf(
             _pdf_sections,
@@ -509,6 +517,15 @@ if pdf_available() and build_dashboard_pdf:
             mime="application/pdf",
             key="dl_pdf",
         )
+        if _pdf_export_error is not None:
+            with st.expander("Why are charts missing from the PDF?"):
+                st.code(_pdf_export_error, language="text")
+                st.markdown(
+                    "Charts need **Kaleido** to export Plotly figures to PNG. "
+                    "Install: `pip install kaleido --upgrade`. "
+                    "If Kaleido 1.x complains about Chrome, run in a terminal: "
+                    "`python -c \"import kaleido; kaleido.get_chrome_sync()\"`"
+                )
     except Exception as e:
         st.caption(f"PDF could not be generated: {e}")
 
