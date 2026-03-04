@@ -192,7 +192,10 @@ def build_dashboard_pdf(
             except Exception:
                 story.append(Paragraph("[Chart image could not be embedded.]", placeholder_style))
         else:
-            story.append(Paragraph("[Chart not available for this period.]", placeholder_style))
+            story.append(Paragraph(
+                "[Chart could not be embedded. Run the app locally with kaleido for PDFs with charts.]",
+                placeholder_style,
+            ))
         story.append(Spacer(1, 0.15 * inch))
 
     doc.build(story)

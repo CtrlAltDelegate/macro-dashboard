@@ -13,6 +13,7 @@ from models import (
     compute_macro_risk_roc,
     compute_risk_thermostat,
     prepare_rotation_curves,
+    prepare_regime_curves,
 )
 
 # Risk band thresholds and labels (0–100 scale)
@@ -319,21 +320,33 @@ def build_thermostat_chart(
     return fig
 
 
+def build_curves_chart(
+    curves_df: pd.DataFrame,
+    title: str = "Relative strength (100 = start)",
+) -> go.Figure | None:
+    """Build a multi-series chart from a DataFrame of rebased curves (e.g. rotation or FRED regime)."""
+    if curves_df.empty or len(curves_df.columns) == 0:
+        return None
+    fig = go.Figure()
+    colors_list = ["#f85149", "#d29922", "#58a6ff", "#a371f7", "#3fb950"]
+    for i, col in enumerate(curves_df.columns):
+        fig.add_trace(go.Scatter(
+            x=curves_df.index,
+            y=curves_df[col].values,
+            mode="lines",
+            name=col,
+            line=dict(color=colors_list[i % len(colors_list)], width=1.5),
+        ))
+    apply_theme(fig, title, height=400)
+    return fig
+
+
 def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
+    """Build rotation chart from Yahoo ratio data. Returns None if empty."""
     if rot_df.empty:
         return None
     curves = prepare_rotation_curves(rot_df)
-    if curves.empty:
-        return None
-    fig = go.Figure()
-    colors = ["#f85149", "#d29922", "#58a6ff", "#a371f7", "#3fb950"]
-    for i, col in enumerate(curves.columns):
-        fig.add_trace(go.Scatter(
-            x=curves.index, y=curves[col].values, mode="lines",
-            name=col, line=dict(color=colors[i % len(colors)], width=1.5)
-        ))
-    apply_theme(fig, "Rotation — Relative strength (100 = start)", height=400)
-    return fig
+    return build_curves_chart(curves, title="Rotation — Relative strength (100 = start)")
 
 
 def build_all_charts(
@@ -346,8 +359,14 @@ def build_all_charts(
     overlay_risk: pd.Series | None = None,
     show_10y_3m: bool = False,
     show_event_markers: bool = False,
+    use_fred_only_last: bool = False,
 ):
-    """Return (fig_liquidity, fig_valuation, fig_macro_risk, fig_yield, fig_fci, fig_credit, fig_thermo, fig_rotation). Any can be None."""
+    """Return (fig_liquidity, fig_valuation, fig_macro_risk, fig_yield, fig_fci, fig_credit, fig_thermo, fig_last). Any can be None."""
+    if use_fred_only_last or rot_df.empty:
+        regime_curves = prepare_regime_curves(val_df, risk_df)
+        fig_last = build_curves_chart(regime_curves, title="Macro Regime (FRED) — 100 = start")
+    else:
+        fig_last = build_rotation_chart(rot_df)
     return (
         build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers),
         build_valuation_chart(val_df, overlay_series=overlay_valuation, show_event_markers=show_event_markers),
@@ -356,5 +375,5 @@ def build_all_charts(
         build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers),
         build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers),
         build_thermostat_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers),
-        build_rotation_chart(rot_df),
+        fig_last,
     )

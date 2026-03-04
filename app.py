@@ -38,9 +38,10 @@ from charts.build import (
     build_credit_spreads_chart,
     build_thermostat_chart,
     build_rotation_chart,
+    build_curves_chart,
 )
 from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_liquidity_data, fetch_rotation_data
-from models import compute_macro_risk_composite, compute_risk_thermostat
+from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_rotation_curves, prepare_regime_curves
 
 try:
     from pdf_report import build_dashboard_pdf, pdf_available
@@ -169,6 +170,11 @@ with st.sidebar:
     show_market_overlay = st.checkbox("Show Market Overlay (S&P 500)", value=False)
     show_10y_3m_lines = st.checkbox("Show 10Y and 3M lines (Yield Curve)", value=False)
     show_event_markers = st.checkbox("Show event markers", value=False)
+    use_fred_only_last_chart = st.checkbox(
+        "Use FRED only for last chart (no Yahoo)",
+        value=False,
+        help="Use macro series from FRED only for chart 8. No API key; works when Yahoo is blocked or rate-limited.",
+    )
     if st.button("Refresh data"):
         st.cache_data.clear()
         st.rerun()
@@ -423,22 +429,37 @@ if fig3 is not None:
 else:
     st.info("Requires macro risk data.")
 
-# ----- Chart 8: Risk Cascade (Rotation) -----
-st.header("8. Risk Cascade Curves (Rotation)")
-st.markdown(
-    '<p class="section-desc">This chart shows how different parts of the market are performing relative to each other over time. '
-    'Each line is rebased to 100 at the start so you can see which segments are strengthening or weakening. '
-    'It helps spot when investors are moving into safer assets (defensives) or taking more risk (small caps, crypto).</p>',
-    unsafe_allow_html=True,
-)
-fig4 = build_rotation_chart(rot_df)
+# ----- Chart 8: Risk Cascade (Rotation) or Macro Regime (FRED) -----
+use_fred_for_last = use_fred_only_last_chart or rot_df.empty
+if use_fred_for_last:
+    regime_curves = prepare_regime_curves(val_df, risk_df)
+    fig4 = build_curves_chart(regime_curves, title="Macro Regime (FRED) — 100 = start")
+    last_chart_header = "8. Macro Regime (FRED)"
+    last_chart_desc = (
+        "This chart uses only FRED data (no Yahoo): S&P 500, Fed liquidity (WALCL), "
+        "Financial Conditions (NFCI), and High Yield spread — each rebased to 100 at the start. "
+        "Use it when Yahoo Finance is unavailable or you prefer FRED-only sources."
+    )
+    last_chart_filename = "08_macro_regime_fred.png"
+else:
+    fig4 = build_rotation_chart(rot_df)
+    last_chart_header = "8. Risk Cascade Curves (Rotation)"
+    last_chart_desc = (
+        "This chart shows how different parts of the market are performing relative to each other over time. "
+        "Each line is rebased to 100 at the start so you can see which segments are strengthening or weakening. "
+        "It helps spot when investors are moving into safer assets (defensives) or taking more risk (small caps, crypto)."
+    )
+    last_chart_filename = "08_risk_cascade_rotation.png"
+
+st.header(last_chart_header)
+st.markdown(f'<p class="section-desc">{last_chart_desc}</p>', unsafe_allow_html=True)
 if fig4 is not None:
     st.plotly_chart(fig4, width="stretch", key="rotation")
     png4, _ = _try_export_png(fig4)
     if png4 is not None:
-        st.download_button("Export PNG", data=png4, file_name="08_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
+        st.download_button("Export PNG", data=png4, file_name=last_chart_filename, mime="image/png", key="dl_rot")
 else:
-    st.info("Rotation data (Yahoo Finance) could not be loaded.")
+    st.info("Chart data could not be loaded. Try \"Use FRED only for last chart\" if Yahoo fails.")
 
 # ----- Generate PDF -----
 if pdf_available() and build_dashboard_pdf:
@@ -450,7 +471,7 @@ if pdf_available() and build_dashboard_pdf:
         "Chicago Fed National Financial Conditions Index (NFCI). Higher values indicate tighter conditions; lower values indicate easier conditions. Zero is the baseline.",
         "ICE BofA US High Yield Option-Adjusted Spread. Rising spreads mean credit is getting more expensive and stress is increasing. Reference lines: 3%% (calm), 5%% (stress rising), 7%% (high stress).",
         "This chart converts complex macro signals into a simple risk score from 0 to 100. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
-        "This chart shows how different parts of the market are performing relative to each other over time. Each line is rebased to 100 at the start. It helps spot when investors are moving into safer assets or taking more risk.",
+        last_chart_desc,
     ]
     # Pass figures so PDF can export at build time (embeds charts when Kaleido works)
     _pdf_sections = [
@@ -461,7 +482,7 @@ if pdf_available() and build_dashboard_pdf:
         ("5. Financial Conditions Index", _section_descs[4], fig_fci),
         ("6. Credit Spreads (High Yield OAS)", _section_descs[5], fig_credit),
         ("7. Market Risk Level (0–100)", _section_descs[6], fig3),
-        ("8. Risk Cascade Curves (Rotation)", _section_descs[7], fig4),
+        (last_chart_header, _section_descs[7], fig4),
     ]
     _readout = ""
     if macro_score and zone_label:
