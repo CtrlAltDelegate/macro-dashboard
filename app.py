@@ -452,15 +452,16 @@ if pdf_available() and build_dashboard_pdf:
         "This chart converts complex macro signals into a simple risk score from 0 to 100. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
         "This chart shows how different parts of the market are performing relative to each other over time. Each line is rebased to 100 at the start. It helps spot when investors are moving into safer assets or taking more risk.",
     ]
+    # Pass figures so PDF can export at build time (embeds charts when Kaleido works)
     _pdf_sections = [
-        ("1. Global Liquidity", _section_descs[0], png_liq),
-        ("2. Stock Market Pressure", _section_descs[1], png1),
-        ("3. Economic Risk Index", _section_descs[2], png2),
-        ("4. Yield Curve (10Y – 3M) + Momentum", _section_descs[3], png_yield),
-        ("5. Financial Conditions Index", _section_descs[4], png_fci),
-        ("6. Credit Spreads (High Yield OAS)", _section_descs[5], png_credit),
-        ("7. Market Risk Level (0–100)", _section_descs[6], png3),
-        ("8. Risk Cascade Curves (Rotation)", _section_descs[7], png4),
+        ("1. Global Liquidity", _section_descs[0], fig_liquidity),
+        ("2. Stock Market Pressure", _section_descs[1], fig1),
+        ("3. Economic Risk Index", _section_descs[2], fig2),
+        ("4. Yield Curve (10Y – 3M) + Momentum", _section_descs[3], fig_yield),
+        ("5. Financial Conditions Index", _section_descs[4], fig_fci),
+        ("6. Credit Spreads (High Yield OAS)", _section_descs[5], fig_credit),
+        ("7. Market Risk Level (0–100)", _section_descs[6], fig3),
+        ("8. Risk Cascade Curves (Rotation)", _section_descs[7], fig4),
     ]
     _readout = ""
     if macro_score and zone_label:
@@ -474,7 +475,12 @@ if pdf_available() and build_dashboard_pdf:
     if credit_status:
         _readout += f"Credit stress: {credit_status}."
     try:
-        pdf_bytes = build_dashboard_pdf(_pdf_sections, report_date=date.today().isoformat(), readout_text=_readout.strip() or None)
+        pdf_bytes = build_dashboard_pdf(
+            _pdf_sections,
+            report_date=date.today().isoformat(),
+            readout_text=_readout.strip() or None,
+            export_fn=lambda fig: (_try_export_png(fig)[0] if fig is not None else None),
+        )
         st.download_button(
             "Download PDF",
             data=pdf_bytes,
