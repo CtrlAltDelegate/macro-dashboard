@@ -15,15 +15,16 @@ load_dotenv()
 
 import pandas as pd
 import config
-from data import fetch_valuation_data, fetch_macro_risk_data, fetch_rotation_data
+from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_rotation_data
 from charts.build import build_all_charts
 
 # Descriptive filenames for Substack / newsletter
 EXPORT_NAMES = [
     "01_valuation_pressure_index.png",
     "02_macro_risk_raw_roc.png",
-    "03_risk_thermostat.png",
-    "04_risk_cascade_rotation.png",
+    "03_yield_curve_10y_3m.png",
+    "04_market_risk_level.png",
+    "05_risk_cascade_rotation.png",
 ]
 
 
@@ -39,10 +40,11 @@ def run_refresh(lookback: str = "5y") -> int:
     obs_start = config.lookback_to_observation_start(lookback)
     rot_period = config.lookback_to_rotation_period(lookback)
 
-    print("Fetching FRED (valuation + macro risk)...")
+    print("Fetching FRED (valuation + macro risk + yield curve)...")
     try:
         val_df = fetch_valuation_data(observation_start=obs_start)
         risk_df = fetch_macro_risk_data(observation_start=obs_start)
+        yield_df = fetch_yield_curve_data(observation_start=obs_start)
     except Exception as e:
         print(f"FRED fetch failed: {e}", file=sys.stderr)
         return 1
@@ -55,7 +57,7 @@ def run_refresh(lookback: str = "5y") -> int:
         rot_df = pd.DataFrame()
 
     print("Building charts...")
-    figs = build_all_charts(val_df, risk_df, rot_df)
+    figs = build_all_charts(val_df, risk_df, yield_df, rot_df)
 
     today = date.today().isoformat()
     date_dir = config.EXPORTS_DIR / today

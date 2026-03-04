@@ -86,6 +86,43 @@ def build_macro_risk_chart(risk_df: pd.DataFrame, overlay_series: pd.Series | No
     return fig
 
 
+def build_yield_curve_chart(yield_df: pd.DataFrame) -> go.Figure | None:
+    """Build yield curve spread chart (10Y – 3M), 20-period MA, inversion shading."""
+    if yield_df.empty or len(yield_df) < 20:
+        return None
+    if "DGS10" not in yield_df.columns or "DGS3MO" not in yield_df.columns:
+        return None
+    spread = yield_df["DGS10"].sub(yield_df["DGS3MO"]).dropna()
+    if spread.empty or len(spread) < 20:
+        return None
+    smoothed = spread.rolling(window=20, min_periods=1).mean()
+    # Inversion fill: only where smoothed < 0 (clip to zero so fill is from line to 0)
+    y_fill = smoothed.clip(upper=0)
+    fig = go.Figure()
+    # Light red shading for inversion periods (below 0)
+    fig.add_trace(go.Scatter(
+        x=y_fill.index,
+        y=y_fill.values,
+        mode="lines",
+        fill="tozeroy",
+        line=dict(width=0),
+        fillcolor="rgba(248, 81, 73, 0.18)",
+        name="Inversion (spread < 0)",
+        showlegend=True,
+    ))
+    fig.add_trace(go.Scatter(
+        x=smoothed.index,
+        y=smoothed.values,
+        mode="lines",
+        name="10Y – 3M (20-period MA)",
+        line=dict(color="#d4a017", width=2.5),
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="rgba(248, 81, 73, 0.9)", line_width=1.2)
+    fig.add_hline(y=1.5, line_dash="dash", line_color="rgba(63, 185, 80, 0.8)", line_width=1)
+    apply_theme(fig, "Yield Curve (10Y – 3M)", height=380)
+    return fig
+
+
 def build_thermostat_chart(risk_df: pd.DataFrame, overlay_series: pd.Series | None = None) -> go.Figure | None:
     if risk_df.empty or len(risk_df) < 60:
         return None
@@ -123,14 +160,16 @@ def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
 def build_all_charts(
     val_df: pd.DataFrame,
     risk_df: pd.DataFrame,
+    yield_df: pd.DataFrame,
     rot_df: pd.DataFrame,
     overlay_valuation: pd.Series | None = None,
     overlay_risk: pd.Series | None = None,
 ):
-    """Return (fig1, fig2, fig3, fig4) for valuation, macro risk, thermostat, rotation. Any can be None."""
+    """Return (fig1, fig2, fig_yield, fig3, fig4) for valuation, macro risk, yield curve, thermostat, rotation. Any can be None."""
     return (
         build_valuation_chart(val_df, overlay_series=overlay_valuation),
         build_macro_risk_chart(risk_df, overlay_series=overlay_risk),
+        build_yield_curve_chart(yield_df),
         build_thermostat_chart(risk_df, overlay_series=overlay_risk),
         build_rotation_chart(rot_df),
     )

@@ -60,3 +60,22 @@ def fetch_macro_risk_data(observation_start: str | None = None) -> pd.DataFrame:
     df = pd.DataFrame(out)
     df = df.ffill().dropna(how="all")
     return df
+
+
+def fetch_yield_curve_data(observation_start: str | None = None) -> pd.DataFrame:
+    """Fetch 10Y and 3M Treasury yields for Chart 3 — Yield curve spread (10Y – 3M)."""
+    client = _get_fred_client()
+    ids = config.FRED_YIELD_CURVE
+    out = {}
+    for name, sid in ids.items():
+        try:
+            s = client.get_series(sid, observation_start=observation_start)
+            s = s.ffill().dropna()
+            out[name] = s
+        except Exception:
+            out[name] = pd.Series(dtype=float)
+    if not out or "DGS10" not in out or "DGS3MO" not in out:
+        return pd.DataFrame()
+    df = pd.DataFrame(out)
+    df = df.ffill().dropna(how="all")
+    return df

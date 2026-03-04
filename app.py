@@ -31,10 +31,11 @@ print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}")
 from charts.build import (
     build_valuation_chart,
     build_macro_risk_chart,
+    build_yield_curve_chart,
     build_thermostat_chart,
     build_rotation_chart,
 )
-from data import fetch_valuation_data, fetch_macro_risk_data, fetch_rotation_data
+from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_rotation_data
 from models import compute_macro_risk_composite, compute_risk_thermostat
 
 
@@ -120,7 +121,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("# Macro Dashboard")
-st.markdown('<p class="subtitle">Valuation pressure · Macro risk · Risk thermostat · Rotation</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Valuation pressure · Macro risk · Yield curve · Risk thermostat · Rotation</p>', unsafe_allow_html=True)
 
 if not config.FRED_API_KEY:
     # Brief diagnostic (no secret values): helps debug Streamlit Cloud Secrets
@@ -158,17 +159,18 @@ def load_all(lookback: str):
     rot_period = config.lookback_to_rotation_period(lookback)
     val_df = fetch_valuation_data(observation_start=obs_start)
     risk_df = fetch_macro_risk_data(observation_start=obs_start)
+    yield_df = fetch_yield_curve_data(observation_start=obs_start)
     try:
         rot_df = fetch_rotation_data(period=rot_period)
     except Exception:
         rot_df = pd.DataFrame()
-    return val_df, risk_df, rot_df
+    return val_df, risk_df, yield_df, rot_df
 
 try:
-    val_df, risk_df, rot_df = load_all(lookback)
+    val_df, risk_df, yield_df, rot_df = load_all(lookback)
 except Exception as e:
     st.error(f"Data load failed: {e}")
-    val_df, risk_df, rot_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    val_df, risk_df, yield_df, rot_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # Optional S&P 500 overlay (SPX/SP500 from valuation data), aligned to each chart's lookback
 overlay_val = None
@@ -231,8 +233,24 @@ if fig2 is not None:
 else:
     st.info("Not enough macro risk data.")
 
-# ----- Chart 3: Market Risk Level 0–100 -----
-st.header("3. Market Risk Level (0–100)")
+# ----- Chart 3: Yield Curve (10Y – 3M) -----
+st.header("3. Yield Curve (10Y – 3M)")
+st.markdown(
+    '<p class="section-desc">This chart shows the difference between long-term and short-term U.S. Treasury interest rates. '
+    'When short-term rates rise above long-term rates (an inverted yield curve), it has historically signaled increasing recession risk.</p>',
+    unsafe_allow_html=True,
+)
+fig_yield = build_yield_curve_chart(yield_df)
+if fig_yield is not None:
+    st.plotly_chart(fig_yield, width="stretch", key="yield_curve")
+    png_yield, _ = _try_export_png(fig_yield)
+    if png_yield is not None:
+        st.download_button("Export PNG", data=png_yield, file_name="03_yield_curve_10y_3m.png", mime="image/png", key="dl_yield")
+else:
+    st.info("Not enough yield curve data. Check FRED series DGS10 and DGS3MO.")
+
+# ----- Chart 4: Market Risk Level 0–100 -----
+st.header("4. Market Risk Level (0–100)")
 st.markdown(
     '<p class="section-desc">This chart converts complex macro signals into a simple risk score from 0 to 100. '
     'Lower scores suggest a stable environment where markets typically perform better. '
@@ -253,12 +271,12 @@ if fig3 is not None:
         st.metric("Zone", _thermo_zone(latest), "")
     png3, _ = _try_export_png(fig3)
     if png3 is not None:
-        st.download_button("Export PNG", data=png3, file_name="03_risk_thermostat.png", mime="image/png", key="dl_thermo")
+        st.download_button("Export PNG", data=png3, file_name="04_market_risk_level.png", mime="image/png", key="dl_thermo")
 else:
     st.info("Requires macro risk data.")
 
-# ----- Chart 4: Risk Cascade (Rotation) -----
-st.header("4. Risk Cascade Curves (Rotation)")
+# ----- Chart 5: Risk Cascade (Rotation) -----
+st.header("5. Risk Cascade Curves (Rotation)")
 st.markdown(
     '<p class="section-desc">This chart shows how different parts of the market are performing relative to each other over time. '
     'Each line is rebased to 100 at the start so you can see which segments are strengthening or weakening. '
@@ -270,7 +288,7 @@ if fig4 is not None:
     st.plotly_chart(fig4, width="stretch", key="rotation")
     png4, _ = _try_export_png(fig4)
     if png4 is not None:
-        st.download_button("Export PNG", data=png4, file_name="04_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
+        st.download_button("Export PNG", data=png4, file_name="05_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
 else:
     st.info("Rotation data (Yahoo Finance) could not be loaded.")
 
