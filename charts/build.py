@@ -96,10 +96,14 @@ def build_yield_curve_chart(yield_df: pd.DataFrame) -> go.Figure | None:
     if spread.empty or len(spread) < 20:
         return None
     smoothed = spread.rolling(window=20, min_periods=1).mean()
+    # Raw 10Y and 3M aligned to smoothed index (for hover tooltip)
+    d10 = yield_df["DGS10"].reindex(smoothed.index).ffill().bfill()
+    d3 = yield_df["DGS3MO"].reindex(smoothed.index).ffill().bfill()
+    customdata = list(zip(d10.values, d3.values))
     # Inversion fill: only where smoothed < 0 (clip to zero so fill is from line to 0)
     y_fill = smoothed.clip(upper=0)
     fig = go.Figure()
-    # Light red shading for inversion periods (below 0)
+    # Light red shading for inversion periods (below 0) — no hover to avoid clutter
     fig.add_trace(go.Scatter(
         x=y_fill.index,
         y=y_fill.values,
@@ -109,6 +113,7 @@ def build_yield_curve_chart(yield_df: pd.DataFrame) -> go.Figure | None:
         fillcolor="rgba(248, 81, 73, 0.18)",
         name="Inversion (spread < 0)",
         showlegend=True,
+        hoverinfo="skip",
     ))
     fig.add_trace(go.Scatter(
         x=smoothed.index,
@@ -116,7 +121,15 @@ def build_yield_curve_chart(yield_df: pd.DataFrame) -> go.Figure | None:
         mode="lines",
         name="10Y – 3M (20-period MA)",
         line=dict(color="#d4a017", width=2.5),
+        customdata=customdata,
+        hovertemplate=(
+            "Date: %{x|%Y-%m-%d}<br>"
+            "10Y Yield: %{customdata[0]:.2f}%<br>"
+            "3M Yield: %{customdata[1]:.2f}%<br>"
+            "Spread: %{y:.2f}%<extra></extra>"
+        ),
     ))
+    # 0% = inversion threshold (red); 1.5% = healthy curve (green)
     fig.add_hline(y=0, line_dash="dash", line_color="rgba(248, 81, 73, 0.9)", line_width=1.2)
     fig.add_hline(y=1.5, line_dash="dash", line_color="rgba(63, 185, 80, 0.8)", line_width=1)
     apply_theme(fig, "Yield Curve (10Y – 3M)", height=380)
