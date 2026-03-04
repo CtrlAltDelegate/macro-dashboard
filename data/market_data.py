@@ -65,10 +65,24 @@ def fetch_rotation_data(
         return pd.DataFrame()
 
     try:
-        # yfinance: with multiple tickers, columns can be MultiIndex (Ticker, OHLCV) or flat
+        # yfinance: with group_by="ticker", columns are MultiIndex (Ticker, Metric) — e.g. (SPY, Close)
+        # data["Close"] fails because "Close" is in level 1, not level 0. Extract Close via xs.
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data["Close"].copy()
-            close_df.columns = close_df.columns.get_level_values(0)
+            if data.columns.nlevels >= 2:
+                # Level 1 is typically Open/High/Low/Close/Volume
+                if "Close" in data.columns.get_level_values(1):
+                    close_df = data.xs("Close", axis=1, level=1).copy()
+                else:
+                    # fallback: level 0 might be Metric in some versions
+                    if "Close" in data.columns.get_level_values(0):
+                        close_df = data.xs("Close", axis=1, level=0).copy()
+                    else:
+                        return pd.DataFrame()
+            else:
+                return pd.DataFrame()
+            # Ensure we have a DataFrame with ticker-named columns (xs may return Series for single ticker)
+            if isinstance(close_df, pd.Series):
+                close_df = close_df.to_frame(close_df.name if close_df.name else tickers[0])
         else:
             if "Close" not in data.columns:
                 return pd.DataFrame()
