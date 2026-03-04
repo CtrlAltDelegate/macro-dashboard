@@ -123,6 +123,31 @@ def build_yield_curve_chart(yield_df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def build_liquidity_chart(liquidity_df: pd.DataFrame) -> go.Figure | None:
+    """Build Global Liquidity chart: Fed balance sheet (WALCL) year-over-year % change."""
+    if liquidity_df.empty or "WALCL" not in liquidity_df.columns:
+        return None
+    walcl = liquidity_df["WALCL"].dropna()
+    if len(walcl) < 53:  # need 52+ points for YoY
+        return None
+    # LiquidityYoY = ((WALCL / WALCL.shift(52)) - 1) * 100 (weekly → 52 weeks = 1 year)
+    yoy = ((walcl / walcl.shift(52)) - 1) * 100
+    yoy = yoy.dropna()
+    if yoy.empty:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=yoy.index,
+        y=yoy.values,
+        mode="lines",
+        name="Liquidity YoY %",
+        line=dict(color="#3fb950", width=2.5),
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="rgba(139, 148, 158, 0.9)", line_width=1.2)
+    apply_theme(fig, "Global Liquidity (YoY %)", height=380)
+    return fig
+
+
 def build_thermostat_chart(risk_df: pd.DataFrame, overlay_series: pd.Series | None = None) -> go.Figure | None:
     if risk_df.empty or len(risk_df) < 60:
         return None
@@ -161,15 +186,17 @@ def build_all_charts(
     val_df: pd.DataFrame,
     risk_df: pd.DataFrame,
     yield_df: pd.DataFrame,
+    liquidity_df: pd.DataFrame,
     rot_df: pd.DataFrame,
     overlay_valuation: pd.Series | None = None,
     overlay_risk: pd.Series | None = None,
 ):
-    """Return (fig1, fig2, fig_yield, fig3, fig4) for valuation, macro risk, yield curve, thermostat, rotation. Any can be None."""
+    """Return (fig1, fig2, fig_yield, fig_liquidity, fig3, fig4) for valuation, macro risk, yield curve, liquidity, thermostat, rotation. Any can be None."""
     return (
         build_valuation_chart(val_df, overlay_series=overlay_valuation),
         build_macro_risk_chart(risk_df, overlay_series=overlay_risk),
         build_yield_curve_chart(yield_df),
+        build_liquidity_chart(liquidity_df),
         build_thermostat_chart(risk_df, overlay_series=overlay_risk),
         build_rotation_chart(rot_df),
     )

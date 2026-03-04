@@ -86,7 +86,12 @@ FRED_YIELD_CURVE = {
     "DGS3MO": "DGS3MO",   # 3-Month Treasury Constant Maturity Rate
 }
 
-# Chart 5 — Rotation (Yahoo Finance tickers; FRED has limited ETF/crypto)
+# Chart 4 — Global Liquidity (Fed balance sheet YoY)
+FRED_LIQUIDITY = {
+    "WALCL": "WALCL",     # Fed total assets (balance sheet)
+}
+
+# Chart 6 — Rotation (Yahoo Finance tickers; FRED has limited ETF/crypto)
 ROTATION_PAIRS = [
     ("ALT", "BTC-USD"),   # Alts vs Bitcoin (use ETH-USD or a basket as ALT proxy)
     ("BTC-USD", "SPY"),   # Bitcoin vs S&P 500
