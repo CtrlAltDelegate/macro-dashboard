@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import os
+from datetime import date
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -40,6 +41,12 @@ from charts.build import (
 )
 from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_liquidity_data, fetch_rotation_data
 from models import compute_macro_risk_composite, compute_risk_thermostat
+
+try:
+    from pdf_report import build_dashboard_pdf, pdf_available
+except ImportError:
+    build_dashboard_pdf = None
+    pdf_available = lambda: False
 
 
 def _try_export_png(fig):
@@ -287,6 +294,9 @@ if credit_status:
 if chips:
     st.markdown('<div class="readout-panel">' + "".join(chips) + "</div>", unsafe_allow_html=True)
 
+# Initialize PNG bytes for PDF (set when each chart is built)
+png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
+
 # ----- Chart 1: Global Liquidity -----
 st.header("1. Global Liquidity")
 st.markdown(
@@ -429,6 +439,51 @@ if fig4 is not None:
         st.download_button("Export PNG", data=png4, file_name="08_risk_cascade_rotation.png", mime="image/png", key="dl_rot")
 else:
     st.info("Rotation data (Yahoo Finance) could not be loaded.")
+
+# ----- Generate PDF -----
+if pdf_available() and build_dashboard_pdf:
+    _section_descs = [
+        "This chart tracks whether liquidity is expanding or contracting. Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.",
+        "This chart measures how much pressure the overall economy is placing on stock prices. It combines major forces like interest rates, inflation, unemployment, and liquidity. Higher values mean more pressure on valuations; lower values tend to support stocks.",
+        "This chart tracks the overall level of stress in the economy by combining multiple macro indicators into one score. The blue line shows current risk level; the ROC line shows how quickly conditions are changing.",
+        "This chart shows the difference between long-term and short-term U.S. Treasury interest rates. An inverted yield curve has historically signaled increasing recession risk.",
+        "Chicago Fed National Financial Conditions Index (NFCI). Higher values indicate tighter conditions; lower values indicate easier conditions. Zero is the baseline.",
+        "ICE BofA US High Yield Option-Adjusted Spread. Rising spreads mean credit is getting more expensive and stress is increasing. Reference lines: 3%% (calm), 5%% (stress rising), 7%% (high stress).",
+        "This chart converts complex macro signals into a simple risk score from 0 to 100. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
+        "This chart shows how different parts of the market are performing relative to each other over time. Each line is rebased to 100 at the start. It helps spot when investors are moving into safer assets or taking more risk.",
+    ]
+    _pdf_sections = [
+        ("1. Global Liquidity", _section_descs[0], png_liq),
+        ("2. Stock Market Pressure", _section_descs[1], png1),
+        ("3. Economic Risk Index", _section_descs[2], png2),
+        ("4. Yield Curve (10Y – 3M) + Momentum", _section_descs[3], png_yield),
+        ("5. Financial Conditions Index", _section_descs[4], png_fci),
+        ("6. Credit Spreads (High Yield OAS)", _section_descs[5], png_credit),
+        ("7. Market Risk Level (0–100)", _section_descs[6], png3),
+        ("8. Risk Cascade Curves (Rotation)", _section_descs[7], png4),
+    ]
+    _readout = ""
+    if macro_score and zone_label:
+        _readout += f"Macro Risk: {macro_score} ({zone_label}). "
+    if liquidity_status:
+        _readout += f"Liquidity: {liquidity_status}. "
+    if yield_status:
+        _readout += f"Yield curve: {yield_status}. "
+    if fci_status:
+        _readout += f"Financial conditions: {fci_status}. "
+    if credit_status:
+        _readout += f"Credit stress: {credit_status}."
+    try:
+        pdf_bytes = build_dashboard_pdf(_pdf_sections, report_date=date.today().isoformat(), readout_text=_readout.strip() or None)
+        st.download_button(
+            "Download PDF",
+            data=pdf_bytes,
+            file_name="macro_dashboard.pdf",
+            mime="application/pdf",
+            key="dl_pdf",
+        )
+    except Exception as e:
+        st.caption(f"PDF could not be generated: {e}")
 
 st.markdown("""
 <div class="footer">
