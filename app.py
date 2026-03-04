@@ -143,10 +143,11 @@ if not config.FRED_API_KEY:
         st.write("**Where to see server logs:** On your app page, click **Manage app** (bottom-right). In the panel that opens, check the **Logs** tab. You should see a line like `[Macro Dashboard] FRED_API_KEY set: True/False` when the app runs—that’s the server-side truth. (Browser Console / F12 is client-side and will not show this.)")
         st.write("If the log says `False` or you don’t see that line, push this repo, add the key in Settings → Secrets as `FRED_API_KEY = \"...\"`, then **Reboot** the app.")
 
-# Sidebar: refresh and lookback
+# Sidebar: refresh, lookback, market overlay
 with st.sidebar:
     st.subheader("Data")
     lookback = st.selectbox("Macro lookback", config.LOOKBACK_OPTIONS, index=2)  # 5y default
+    show_market_overlay = st.checkbox("Show Market Overlay (S&P 500)", value=False)
     if st.button("Refresh data"):
         st.cache_data.clear()
         st.rerun()
@@ -169,13 +170,41 @@ except Exception as e:
     st.error(f"Data load failed: {e}")
     val_df, risk_df, rot_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# ----- Chart 1: Valuation Pressure Index -----
-st.header("1. Valuation Pressure Index")
+# Optional S&P 500 overlay (SPX/SP500 from valuation data), aligned to each chart's lookback
+overlay_val = None
+overlay_risk = None
+if show_market_overlay and not val_df.empty and "SP500" in val_df.columns:
+    s = val_df["SP500"].dropna()
+    if not s.empty and s.iloc[0] != 0:
+        overlay_val = (s / s.iloc[0]) * 100
+    if not risk_df.empty and overlay_val is not None:
+        aligned = val_df["SP500"].reindex(risk_df.index).ffill().dropna()
+        if not aligned.empty and aligned.iloc[0] != 0:
+            overlay_risk = (aligned / aligned.iloc[0]) * 100
+
+
+def _thermo_zone(value: float) -> str:
+    if value < 20:
+        return "Very Low Risk"
+    if value < 40:
+        return "Low Risk"
+    if value < 60:
+        return "Moderate Risk"
+    if value < 80:
+        return "High Risk"
+    return "Extreme Risk"
+
+
+# ----- Chart 1: Stock Market Pressure -----
+st.header("1. Stock Market Pressure")
 st.markdown(
-    '<p class="section-desc">Macro-driven valuation compression pressure on equities. Rising = tightening; falling = easing.</p>',
+    '<p class="section-desc">This chart measures how much pressure the overall economy is placing on stock prices. '
+    'It combines major forces like interest rates, inflation, unemployment, and liquidity. '
+    'Higher values mean more pressure on valuations, which can make it harder for the market to move higher. '
+    'Lower values mean less pressure, which tends to support stocks.</p>',
     unsafe_allow_html=True,
 )
-fig1 = build_valuation_chart(val_df)
+fig1 = build_valuation_chart(val_df, overlay_series=overlay_val)
 if fig1 is not None:
     st.plotly_chart(fig1, width="stretch", key="vpi")
     png1, _ = _try_export_png(fig1)
@@ -184,13 +213,16 @@ if fig1 is not None:
 else:
     st.info("Not enough valuation data. Check FRED_API_KEY and series availability.")
 
-# ----- Chart 2: Macro Risk (Raw + ROC) -----
-st.header("2. Macro Risk Dashboard")
+# ----- Chart 2: Economic Risk Index -----
+st.header("2. Economic Risk Index")
 st.markdown(
-    '<p class="section-desc">Raw standardized composite + ROC (acceleration). Rising = deterioration; falling = stabilization.</p>',
+    '<p class="section-desc">This chart tracks the overall level of stress in the economy by combining multiple macro '
+    'indicators into one score. The goal is to measure how stable or unstable the environment is for markets. '
+    'The blue line shows current risk level, and the ROC line shows how quickly conditions are changing. '
+    'Sharp increases often signal rising instability before markets fully react.</p>',
     unsafe_allow_html=True,
 )
-fig2 = build_macro_risk_chart(risk_df)
+fig2 = build_macro_risk_chart(risk_df, overlay_series=overlay_risk)
 if fig2 is not None:
     st.plotly_chart(fig2, width="stretch", key="macro_risk")
     png2, _ = _try_export_png(fig2)
@@ -199,13 +231,16 @@ if fig2 is not None:
 else:
     st.info("Not enough macro risk data.")
 
-# ----- Chart 3: Risk Thermostat 0–100 -----
-st.header("3. Risk Thermostat (0–100)")
+# ----- Chart 3: Market Risk Level 0–100 -----
+st.header("3. Market Risk Level (0–100)")
 st.markdown(
-    '<p class="section-desc">Allocation guide: 0–25 Risk-on · 25–50 Neutral · 50–70 De-risk · 70–85 Defensive · 85–100 Capital preservation</p>',
+    '<p class="section-desc">This chart converts complex macro signals into a simple risk score from 0 to 100. '
+    'Lower scores suggest a stable environment where markets typically perform better. '
+    'Higher scores suggest growing stress in the financial system. '
+    'The colored bands show whether conditions look very low risk through extreme risk.</p>',
     unsafe_allow_html=True,
 )
-fig3 = build_thermostat_chart(risk_df)
+fig3 = build_thermostat_chart(risk_df, overlay_series=overlay_risk)
 if fig3 is not None:
     raw = compute_macro_risk_composite(risk_df)
     thermo = compute_risk_thermostat(raw)
@@ -215,8 +250,7 @@ if fig3 is not None:
     with col1:
         st.metric("Current reading", f"{latest:.0f}", "0–100 scale")
     with col2:
-        zone = "Risk-on" if latest < 25 else "Neutral" if latest < 50 else "De-risk high beta" if latest < 70 else "Defensive rotation" if latest < 85 else "Capital preservation"
-        st.metric("Zone", zone, "")
+        st.metric("Zone", _thermo_zone(latest), "")
     png3, _ = _try_export_png(fig3)
     if png3 is not None:
         st.download_button("Export PNG", data=png3, file_name="03_risk_thermostat.png", mime="image/png", key="dl_thermo")
@@ -226,7 +260,9 @@ else:
 # ----- Chart 4: Risk Cascade (Rotation) -----
 st.header("4. Risk Cascade Curves (Rotation)")
 st.markdown(
-    '<p class="section-desc">Relative strength ratios (rebased 100). Risk escalates: alts → BTC → small cap → credit → defensives.</p>',
+    '<p class="section-desc">This chart shows how different parts of the market are performing relative to each other over time. '
+    'Each line is rebased to 100 at the start so you can see which segments are strengthening or weakening. '
+    'It helps spot when investors are moving into safer assets (defensives) or taking more risk (small caps, crypto).</p>',
     unsafe_allow_html=True,
 )
 fig4 = build_rotation_chart(rot_df)
