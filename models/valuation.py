@@ -5,6 +5,9 @@ Formula: ((SPX / UNRATE^2) × INFLATION × FEDFUNDS) / M2
 
 Rising = macro tightening / pressure building.
 Falling = liquidity improving / pressure easing.
+
+Note: INFLATION (CPI) and M2 are level series; for long lookbacks consider
+using YoY % change to keep the index stable. Chart display rebases to 100 at start.
 """
 from __future__ import annotations
 

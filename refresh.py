@@ -18,14 +18,16 @@ import config
 from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_liquidity_data, fetch_rotation_data
 from charts.build import build_all_charts
 
-# Descriptive filenames for Substack / newsletter
+# Descriptive filenames for Substack / newsletter (order matches dashboard 1–8)
 EXPORT_NAMES = [
-    "01_valuation_pressure_index.png",
-    "02_macro_risk_raw_roc.png",
-    "03_yield_curve_10y_3m.png",
-    "04_global_liquidity.png",
-    "05_market_risk_level.png",
-    "06_risk_cascade_rotation.png",
+    "01_global_liquidity.png",
+    "02_stock_market_pressure.png",
+    "03_economic_risk_index.png",
+    "04_yield_curve_10y_3m.png",
+    "05_financial_conditions_index.png",
+    "06_credit_spreads.png",
+    "07_market_risk_level.png",
+    "08_risk_cascade_rotation.png",
 ]
 
 
@@ -59,7 +61,7 @@ def run_refresh(lookback: str = "5y") -> int:
         rot_df = pd.DataFrame()
 
     print("Building charts...")
-    figs = build_all_charts(val_df, risk_df, yield_df, liquidity_df, rot_df)
+    figs = build_all_charts(val_df, risk_df, yield_df, liquidity_df, rot_df, show_event_markers=False)
 
     today = date.today().isoformat()
     date_dir = config.EXPORTS_DIR / today
