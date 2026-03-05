@@ -44,6 +44,7 @@ from charts.build import (
     build_bitcoin_chart,
     build_bands_chart,
     build_rotation_ladder_chart,
+    build_btc_rainbow_chart,
 )
 from data import (
     fetch_valuation_data,
@@ -57,6 +58,7 @@ from data import (
 )
 from data.market_data import fetch_rotation_ladder_data
 from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_regime_curves
+from models.btc_metrics import compute_btc_snapshot
 
 try:
     from pdf_report import build_dashboard_pdf, pdf_available
@@ -168,6 +170,9 @@ st.markdown("""
     .readout-chip--red { background: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
     .readout-chip--yellow { background: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.4); }
     .readout-label { color: #8b949e; font-size: 0.75rem; margin-right: 0.15rem; }
+    /* Today's Snapshot per tab */
+    .snapshot-panel { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+    .snapshot-title { font-size: 0.8rem; font-weight: 600; color: #8b949e; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -209,6 +214,8 @@ with st.sidebar:
     btc_log_scale = st.checkbox("Bitcoin: log scale", value=True)
     btc_show_liquidity = st.checkbox("Bitcoin: overlay Liquidity YoY", value=False)
     btc_show_real_yield = st.checkbox("Bitcoin: overlay Real yields (10Y TIPS)", value=False)
+    btc_rainbow_k = st.slider("BTC Rainbow band width (k σ)", min_value=0.25, max_value=3.0, value=2.0, step=0.25, help="Terminal price proxy = midline − k×stdev. Regression uses full history.")
+    st.caption("BTC regression uses full history for stability; chart display follows lookback.")
     st.subheader("Regimes & Bands")
     use_fred_only_last_chart = st.checkbox(
         "Use FRED-only for final chart (no Yahoo)",
@@ -286,6 +293,18 @@ if not liquidity_df.empty and "WALCL" in liquidity_df.columns and len(liquidity_
     liquidity_yoy_series = liquidity_yoy_series.dropna()
 # CPI for oil overlay (from macro risk INFLATION = CPIAUCSL)
 cpi_series = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else None
+# BTC snapshot (WMAs, ROC, distances, Balanced/Terminal); terminal_k from sidebar
+btc_snapshot = compute_btc_snapshot(btc_series, terminal_k=btc_rainbow_k) if btc_series is not None and not btc_series.empty else {}
+# Oil snapshot (current WTI, 4W ROC, 52W ROC)
+oil_snapshot = {}
+if not oil_df.empty and "DCOILWTICO" in oil_df.columns:
+    oil_price = oil_df["DCOILWTICO"].dropna()
+    if len(oil_price) >= 2:
+        oil_snapshot["price"] = float(oil_price.iloc[-1])
+        if len(oil_price) > 28:
+            oil_snapshot["roc4w"] = (oil_price.iloc[-1] / oil_price.iloc[-28] - 1) * 100
+        if len(oil_price) >= 253:
+            oil_snapshot["roc52w"] = (oil_price.iloc[-1] / oil_price.iloc[-252] - 1) * 100
 
 
 def _thermo_zone(value: float) -> str:
@@ -298,6 +317,34 @@ def _thermo_zone(value: float) -> str:
     if value < 80:
         return "High Risk"
     return "Extreme Risk"
+
+
+def _regime_zone_label_6(value: float) -> str:
+    """Six zones for Regimes tab snapshot (0–20, 20–40, 40–60, 60–75, 75–90, 90–100)."""
+    if value < 20:
+        return "Very Low Risk"
+    if value < 40:
+        return "Low Risk"
+    if value < 60:
+        return "Moderate Risk"
+    if value < 75:
+        return "High Risk"
+    if value < 90:
+        return "Very High Risk"
+    return "Extreme Risk"
+
+
+def _regime_tendency_text(zone: str) -> str:
+    """Short factual text for current zone (neutral language)."""
+    m = {
+        "Very Low Risk": "Historically, this zone has tended to favor risk-on assets.",
+        "Low Risk": "Historically, this zone has often supported equities and risk assets.",
+        "Moderate Risk": "Historically, this zone has been mixed; diversification often helps.",
+        "High Risk": "Historically, this zone has often favored more defensive positioning.",
+        "Very High Risk": "Historically, this zone has often favored capital preservation.",
+        "Extreme Risk": "Historically, this zone has often favored defensive assets and cash.",
+    }
+    return m.get(zone, "Zone-dependent; consider macro context.")
 
 
 # ----- Current Readout Panel -----
@@ -395,6 +442,26 @@ png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
 tab_macro, tab_markets, tab_regimes = st.tabs(["Macro (Core)", "Markets", "Regimes & Bands"])
 
 with tab_macro:
+    st.markdown("#### Today's Snapshot")
+    with st.container():
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            st.metric("Macro Risk", f"{macro_score}" if macro_score else "—", zone_label or "")
+        with c2:
+            st.metric("Liquidity", liquidity_status or "—", "WALCL YoY")
+        with c3:
+            spread_str = f"{last_spread_val:.2f}%" if last_spread_val is not None else "—"
+            st.metric("Yield Curve (10Y–3M)", spread_str, yield_status or "")
+        with c4:
+            mom_str = f"{last_roc_90_val:.2f}" if last_roc_90_val is not None else "—"
+            st.metric("YC Momentum (90d)", mom_str, yield_mom_status or "")
+        with c5:
+            st.metric("FCI", fci_status or "—", "NFCI")
+        c6, c7, _ = st.columns([1, 1, 2])
+        with c6:
+            st.metric("Credit Spreads", credit_status or "—", "HY OAS")
+    st.divider()
+
     # ----- Chart 1: Global Liquidity -----
     st.header("1. Global Liquidity")
     st.markdown(
@@ -516,6 +583,44 @@ with tab_macro:
         st.info("Requires macro risk data.")
 
 with tab_markets:
+    st.markdown("#### Today's Snapshot")
+    # BTC strip
+    if btc_snapshot and btc_snapshot.get("price") is not None:
+        st.caption("**BTC**")
+        r1, r2, r3, r4, r5 = st.columns(5)
+        with r1:
+            st.metric("BTC Price", f"${btc_snapshot['price']:,.0f}" if btc_snapshot.get("price") else "—", "")
+            for k in ["wma50", "wma100", "wma200", "wma300"]:
+                v = btc_snapshot.get(k)
+                st.caption(f"{k}: ${v:,.0f}" if v is not None else f"{k}: —")
+        with r2:
+            st.metric("Balanced (proxy)", f"${btc_snapshot['balanced_price']:,.0f}" if btc_snapshot.get("balanced_price") else "—", "")
+            st.metric("Terminal (proxy)", f"${btc_snapshot['terminal_price']:,.0f}" if btc_snapshot.get("terminal_price") else "—", "")
+        with r3:
+            for label, key in [("1W", "roc1w"), ("4W", "roc4w"), ("12W", "roc12w"), ("52W", "roc52w")]:
+                v = btc_snapshot.get(key)
+                st.metric(f"ROC {label}", f"{v:.1f}%" if v is not None else "—", "")
+        with r4:
+            v200 = btc_snapshot.get("dist_200wma_pct")
+            v300 = btc_snapshot.get("dist_300wma_pct")
+            st.metric("Dist 200WMA", f"{v200:.1f}%" if v200 is not None else "—", "")
+            st.metric("Dist 300WMA", f"{v300:.1f}%" if v300 is not None else "—", "")
+        with r5:
+            st.caption("WMAs = weighted moving avg (weekly)")
+    # Oil snapshot
+    if oil_snapshot:
+        st.caption("**Oil (WTI)**")
+        o1, o2, o3 = st.columns(3)
+        with o1:
+            st.metric("WTI Spot", f"${oil_snapshot.get('price', 0):.2f}" if oil_snapshot.get("price") is not None else "—", "")
+        with o2:
+            v = oil_snapshot.get("roc4w")
+            st.metric("4W ROC", f"{v:.1f}%" if v is not None else "—", "")
+        with o3:
+            v = oil_snapshot.get("roc52w")
+            st.metric("52W ROC", f"{v:.1f}%" if v is not None else "—", "")
+    st.divider()
+
     st.header("Oil (WTI)")
     st.markdown(
         '<p class="section-desc">WTI spot price (FRED DCOILWTICO). Use toggles for log scale, YoY % change, and CPI YoY overlay.</p>',
@@ -550,7 +655,31 @@ with tab_markets:
     else:
         st.info("Not enough Bitcoin data. Try FRED CBBTCUSD or Yahoo BTC-USD.")
 
+    st.header("Bitcoin Rainbow (Log Regression Bands)")
+    st.markdown(
+        '<p class="section-desc">Log regression bands (full history); display follows lookback. Balanced = midline; Terminal = lower band (proxy).</p>',
+        unsafe_allow_html=True,
+    )
+    obs_start = config.lookback_to_observation_start(lookback)
+    fig_rainbow = build_btc_rainbow_chart(
+        btc_series,
+        display_start=obs_start,
+        k_bands=[0.5, 1.0, 1.5, 2.0],
+        log_scale=btc_log_scale,
+    )
+    if fig_rainbow is not None:
+        st.plotly_chart(fig_rainbow, width="stretch", key="btc_rainbow")
+    else:
+        st.info("Not enough BTC history for Rainbow (need 30+ points).")
+
 with tab_regimes:
+    st.markdown("#### Today's Snapshot")
+    if not thermo_series.empty:
+        current_zone = _regime_zone_label_6(thermo_series.iloc[-1])
+        tendency = _regime_tendency_text(current_zone)
+        st.metric("Current macro band", current_zone, "")
+        st.caption(tendency)
+    st.divider()
     st.markdown(
         "**Macro Risk Bands** use the Market Risk Level (0–100) to shade each chart by regime. "
         "Green/blue = lower risk (opportunity); yellow/orange/red = higher risk (caution)."

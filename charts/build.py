@@ -3,6 +3,7 @@ Build Plotly figures for all four dashboard charts. Shared by app.py and refresh
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -16,6 +17,7 @@ from models import (
     prepare_rotation_zscore,
     prepare_regime_curves,
 )
+from models.btc_metrics import btc_rainbow_regression
 
 # Risk band thresholds and labels (0–100 scale)
 THERMO_BANDS = [(0, 20, "Very Low Risk"), (20, 40, "Low Risk"), (40, 60, "Moderate Risk"), (60, 80, "High Risk"), (80, 100, "Extreme Risk")]
@@ -522,6 +524,81 @@ def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
         return None
     curves = prepare_rotation_curves(rot_df)
     return build_curves_chart(curves, title="Rotation — Relative strength (100 = start)")
+
+
+# Rainbow band colors (blue → red) for k=0.5, 1.0, 1.5, 2.0
+RAINBOW_COLORS = [
+    "rgba(88, 166, 255, 0.35)",   # blue
+    "rgba(63, 185, 80, 0.3)",
+    "rgba(210, 153, 34, 0.35)",
+    "rgba(248, 81, 73, 0.4)",     # red
+]
+
+
+def build_btc_rainbow_chart(
+    btc_series: pd.Series,
+    display_start: str | None = None,
+    k_bands: list[float] | None = None,
+    log_scale: bool = True,
+) -> go.Figure | None:
+    """
+    Bitcoin Rainbow (log regression bands). Regression uses full history;
+    display is sliced to display_start (lookback). Bands at k*stdev (blue→red).
+    """
+    if btc_series is None or btc_series.empty or len(btc_series) < 30:
+        return None
+    if k_bands is None:
+        k_bands = [0.5, 1.0, 1.5, 2.0]
+    result = btc_rainbow_regression(btc_series, t0_date="2010-07-17", k_bands=k_bands)
+    if result is None:
+        return None
+    price_full, midline_full, bands, _a, _b, stdev = result
+    if display_start:
+        try:
+            cut = pd.Timestamp(display_start)
+            price = price_full.loc[price_full.index >= cut]
+            midline = midline_full.loc[midline_full.index >= cut]
+            if price.empty or midline.empty:
+                price, midline = price_full, midline_full
+            else:
+                bands = {k: {"lower": v["lower"].loc[v["lower"].index >= cut], "upper": v["upper"].loc[v["upper"].index >= cut]} for k, v in bands.items()}
+        except Exception:
+            price, midline = price_full, midline_full
+    else:
+        price, midline = price_full, midline_full
+    if price.empty or midline.empty:
+        return None
+    fig = go.Figure()
+    # Bands: fill between lower and upper (outer to inner: 2σ, 1.5σ, 1σ, 0.5σ)
+    sorted_k = sorted(bands.keys(), reverse=True)
+    for i, k in enumerate(sorted_k):
+        lo = bands[k]["lower"].reindex(price.index).ffill().bfill()
+        hi = bands[k]["upper"].reindex(price.index).ffill().bfill()
+        color = RAINBOW_COLORS[i % len(RAINBOW_COLORS)]
+        fig.add_trace(go.Scatter(x=price.index, y=lo.values, mode="lines", line=dict(width=0), name=f"±{k}σ", showlegend=True, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=price.index, y=hi.values, mode="lines", line=dict(width=0), fill="tonexty", fillcolor=color, hoverinfo="skip", showlegend=False))
+    # Midline (balanced price)
+    terminal_series = bands.get(2.0, bands[sorted_k[-1]])["lower"] if bands else None
+    terminal_last = float(terminal_series.iloc[-1]) if terminal_series is not None and not terminal_series.empty else None
+    fig.add_trace(go.Scatter(
+        x=midline.index, y=midline.values, mode="lines", name="Balanced (midline)",
+        line=dict(color="#8b949e", width=1.5, dash="dash"),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Balanced: $%{y:,.0f}<extra></extra>",
+    ))
+    # Price on top (hover: price, balanced, terminal)
+    mid_aligned = midline.reindex(price.index).ffill().bfill()
+    term_aligned = terminal_series.reindex(price.index).ffill().bfill() if terminal_series is not None else None
+    customdata = np.column_stack([mid_aligned.values, term_aligned.values]) if term_aligned is not None else np.column_stack([mid_aligned.values, np.full(len(price), terminal_last if terminal_last is not None else np.nan)])
+    fig.add_trace(go.Scatter(
+        x=price.index, y=price.values, mode="lines", name="BTC price",
+        line=dict(color="#f0c14b", width=2),
+        customdata=customdata,
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: $%{y:,.0f}<br>Balanced: $%{customdata[0]:,.0f}<br>Terminal: $%{customdata[1]:,.0f}<extra></extra>",
+    ))
+    apply_theme(fig, "Bitcoin Rainbow (Log Regression Bands)", height=380)
+    if log_scale:
+        fig.update_yaxes(type="log")
+    return fig
 
 
 def build_rotation_ladder_chart(ladder_ratios_df: pd.DataFrame) -> go.Figure | None:
