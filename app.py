@@ -8,6 +8,7 @@ import os
 from datetime import date
 
 import pandas as pd
+import plotly.graph_objects as go
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -61,6 +62,23 @@ def _try_export_png(fig):
         return buf.getvalue(), None
     except Exception as e:
         return None, str(e)
+
+
+def _fig_for_pdf(fig):
+    """Return a copy of the figure with a light, print-friendly theme for the PDF report."""
+    if fig is None:
+        return None
+    try:
+        pdf_fig = go.Figure(fig)
+        pdf_fig.update_layout(
+            template="plotly_white",
+            paper_bgcolor="white",
+            plot_bgcolor="#fafafa",
+            font=dict(color="#333333", size=11),
+        )
+        return pdf_fig
+    except Exception:
+        return fig
 
 
 st.set_page_config(
@@ -508,7 +526,7 @@ if pdf_available() and build_dashboard_pdf:
             _pdf_sections,
             report_date=date.today().isoformat(),
             readout_text=_readout.strip() or None,
-            export_fn=lambda fig: (_try_export_png(fig)[0] if fig is not None else None),
+            export_fn=lambda fig: (_try_export_png(_fig_for_pdf(fig))[0] if fig is not None else None),
         )
         st.download_button(
             "Download PDF",
