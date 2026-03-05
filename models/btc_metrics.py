@@ -103,21 +103,25 @@ def _balanced_terminal_proxy(weekly: pd.Series, k: float = 2.0) -> tuple[float |
         return None, None
 
 
+# Option A: symmetric k list for rainbow bands (valuation/cycle zones)
+RAINBOW_K_LIST = [-2.0, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2.0]
+
+
 def btc_rainbow_regression(
     btc_series: pd.Series,
     t0_date: str | None = "2010-07-17",
     k_bands: list[float] | None = None,
-) -> tuple[pd.Series, pd.Series, dict[float, dict[str, pd.Series]], float, float, float] | None:
+) -> tuple[pd.Series, pd.Series, dict[float, pd.Series], float, float, float] | None:
     """
     Full-history log regression for Rainbow chart.
-    log(price) ~ a + b*log(t), t = days since t0.
+    ln(price) = a + b*ln(t). band_k = exp(ln(price_hat) + k*sigma).
     Returns (price, midline, bands_dict, a, b, stdev_residual).
-    bands_dict[k] = {"lower": series, "upper": series}.
+    bands_dict[k] = single series (one curve per k).
     """
     if btc_series is None or btc_series.empty or len(btc_series) < 30:
         return None
     if k_bands is None:
-        k_bands = [0.5, 1.0, 1.5, 2.0]
+        k_bands = RAINBOW_K_LIST
     price = btc_series.ffill().dropna()
     if price.empty or len(price) < 30:
         return None
@@ -128,22 +132,18 @@ def btc_rainbow_regression(
     t_days[t_days < 1] = 1
     log_t = np.log(t_days)
     log_p = np.log(price.values.astype(float))
-    X = np.column_stack([np.ones_like(log_t), log_t])
     try:
-        beta, _, _, _ = np.linalg.lstsq(X, log_p, rcond=None)
-        a, b = float(beta[0]), float(beta[1])
+        beta = np.polyfit(log_t, log_p, 1)
+        a, b = float(beta[1]), float(beta[0])
         midline_log = a + b * log_t
-        residuals = log_p - midline_log
-        stdev_residual = float(np.nanstd(residuals))
-        if np.isnan(stdev_residual) or stdev_residual <= 0:
-            stdev_residual = 0.3
+        resid = log_p - midline_log
+        sigma = float(np.nanstd(resid))
+        if np.isnan(sigma) or sigma <= 0:
+            sigma = 0.3
         midline = pd.Series(np.exp(midline_log), index=price.index)
         bands = {}
         for k in k_bands:
-            bands[k] = {
-                "lower": pd.Series(np.exp(midline_log - k * stdev_residual), index=price.index),
-                "upper": pd.Series(np.exp(midline_log + k * stdev_residual), index=price.index),
-            }
-        return (price, midline, bands, a, b, stdev_residual)
+            bands[k] = pd.Series(np.exp(midline_log + k * sigma), index=price.index)
+        return (price, midline, bands, a, b, sigma)
     except Exception:
         return None

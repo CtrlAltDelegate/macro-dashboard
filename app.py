@@ -217,6 +217,7 @@ with st.sidebar:
     btc_rainbow_k = st.slider("BTC Rainbow band width (k σ)", min_value=0.25, max_value=3.0, value=2.0, step=0.25, help="Terminal price proxy = midline − k×stdev. Regression uses full history.")
     st.caption("BTC regression uses full history for stability; chart display follows lookback.")
     st.subheader("Regimes & Bands")
+    spx_log_scale = st.checkbox("SPX Regime Bands: log scale", value=False)
     use_fred_only_last_chart = st.checkbox(
         "Use FRED-only for final chart (no Yahoo)",
         value=False,
@@ -664,7 +665,6 @@ with tab_markets:
     fig_rainbow = build_btc_rainbow_chart(
         btc_series,
         display_start=obs_start,
-        k_bands=[0.5, 1.0, 1.5, 2.0],
         log_scale=btc_log_scale,
     )
     if fig_rainbow is not None:
@@ -674,11 +674,33 @@ with tab_markets:
 
 with tab_regimes:
     st.markdown("#### Today's Snapshot")
-    if not thermo_series.empty:
-        current_zone = _regime_zone_label_6(thermo_series.iloc[-1])
-        tendency = _regime_tendency_text(current_zone)
-        st.metric("Current macro band", current_zone, "")
-        st.caption(tendency)
+    r1, r2, r3, r4, r5 = st.columns(5)
+    with r1:
+        risk_val = thermo_series.iloc[-1] if not thermo_series.empty else None
+        zone = _regime_zone_label_6(risk_val) if risk_val is not None else "—"
+        st.metric("Risk score", f"{risk_val:.0f}/100" if risk_val is not None else "—", zone)
+    with r2:
+        liq_yoy = None
+        if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
+            liq_yoy = float(liquidity_yoy_series.iloc[-1])
+        st.metric("Liquidity YoY", f"{liq_yoy:.1f}%" if liq_yoy is not None else "—", "WALCL")
+    with r3:
+        spread_str = f"{last_spread_val:.2f}%" if last_spread_val is not None else "—"
+        mom_str = f"{last_roc_90_val:.2f}" if last_roc_90_val is not None else "—"
+        st.metric("Yield curve (10Y–3M)", spread_str, yield_status or "")
+        st.caption(f"Momentum (90d): {mom_str}")
+    with r4:
+        hy = None
+        if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns:
+            s = risk_df["CREDIT_STRESS"].dropna()
+            hy = float(s.iloc[-1]) if len(s) else None
+        st.metric("HY OAS", f"{hy:.2f}%" if hy is not None else "—", "")
+    with r5:
+        nfci = None
+        if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
+            s = risk_df["CREDIT_TIGHTENING"].dropna()
+            nfci = float(s.iloc[-1]) if len(s) else None
+        st.metric("NFCI", f"{nfci:.3f}" if nfci is not None else "—", "FCI")
     st.divider()
     st.markdown(
         "**Macro Risk Bands** use the Market Risk Level (0–100) to shade each chart by regime. "
@@ -688,7 +710,7 @@ with tab_regimes:
     if not sp500_series.empty and not thermo_series.empty:
         st.subheader("S&P 500 with risk bands")
         st.caption("Background color shows macro risk zone over time. Price (white line) on top.")
-        fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers)
+        fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers, log_scale=spx_log_scale)
         if fig_bands_spx is not None:
             st.plotly_chart(fig_bands_spx, width="stretch", key="bands_spx")
     else:

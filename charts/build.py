@@ -470,13 +470,20 @@ def _zone_index(risk_val: float) -> int:
     return 0
 
 
+def _zone_label(risk_val: float) -> str:
+    """Return zone label (e.g. 'Low Risk') for risk score 0–100."""
+    idx = _zone_index(risk_val)
+    return REGIME_BANDS_6[idx][2]
+
+
 def build_bands_chart(
     price_series: pd.Series,
     risk_score_series: pd.Series,
     title: str,
     show_event_markers: bool = False,
+    log_scale: bool = False,
 ) -> go.Figure | None:
-    """Asset price with background shading by macro risk zone (0–100). Bands = opportunity vs risk."""
+    """Asset price with background shading by macro risk zone (0–100). Hover: date, price, risk, zone."""
     if price_series is None or price_series.empty or risk_score_series is None or risk_score_series.empty:
         return None
     price = price_series.ffill().dropna()
@@ -485,7 +492,6 @@ def build_bands_chart(
     risk_aligned = risk_score_series.reindex(price.index).ffill().bfill().dropna()
     if risk_aligned.empty:
         return None
-    # Zone per date (0..5)
     zones = risk_aligned.apply(_zone_index)
     shapes = []
     i = 0
@@ -506,15 +512,21 @@ def build_bands_chart(
             layer="below",
         ))
         i = j
+    risk_vals = risk_aligned.reindex(price.index).ffill().bfill()
+    zone_labels = risk_vals.apply(_zone_label)
+    customdata = np.column_stack([risk_vals.values, np.asarray(zone_labels)])
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=price.index, y=price.values, mode="lines", name="Price",
         line=dict(color="#e6edf3", width=2),
-        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: %{y:,.2f}<extra></extra>",
+        customdata=customdata,
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: %{y:,.2f}<br>Risk: %{customdata[0]:.0f}<br>Zone: %{customdata[1]}<extra></extra>",
     ))
     fig.update_layout(shapes=shapes)
     _add_event_markers(fig, show_event_markers)
     apply_theme(fig, title, height=380)
+    if log_scale:
+        fig.update_yaxes(type="log")
     return fig
 
 
@@ -526,12 +538,16 @@ def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
     return build_curves_chart(curves, title="Rotation — Relative strength (100 = start)")
 
 
-# Rainbow band colors (blue → red) for k=0.5, 1.0, 1.5, 2.0
-RAINBOW_COLORS = [
-    "rgba(88, 166, 255, 0.35)",   # blue
+# Rainbow: fill between adjacent k-bands; gradient blue (low k) → red (high k)
+RAINBOW_GRADIENT = [
+    "rgba(88, 166, 255, 0.4)",   # -2 to -1.5
+    "rgba(88, 166, 255, 0.35)",
+    "rgba(63, 185, 80, 0.35)",
     "rgba(63, 185, 80, 0.3)",
+    "rgba(210, 153, 34, 0.3)",   # -0.5 to 0
     "rgba(210, 153, 34, 0.35)",
-    "rgba(248, 81, 73, 0.4)",     # red
+    "rgba(248, 140, 60, 0.35)",
+    "rgba(248, 81, 73, 0.4)",    # 1.5 to 2
 ]
 
 
@@ -542,17 +558,20 @@ def build_btc_rainbow_chart(
     log_scale: bool = True,
 ) -> go.Figure | None:
     """
-    Bitcoin Rainbow (log regression bands). Regression uses full history;
-    display is sliced to display_start (lookback). Bands at k*stdev (blue→red).
+    Bitcoin Rainbow (log regression bands). ln(price)=a+b*ln(t); band_k = exp(ln_hat + k*sigma).
+    Full history for regression; display by lookback. Fill between adjacent bands (blue→red).
+    Hover: Date, price, band zone, midline, lower (k=-2), upper (k=+2).
     """
+    from models.btc_metrics import RAINBOW_K_LIST
+
     if btc_series is None or btc_series.empty or len(btc_series) < 30:
         return None
     if k_bands is None:
-        k_bands = [0.5, 1.0, 1.5, 2.0]
+        k_bands = RAINBOW_K_LIST
     result = btc_rainbow_regression(btc_series, t0_date="2010-07-17", k_bands=k_bands)
     if result is None:
         return None
-    price_full, midline_full, bands, _a, _b, stdev = result
+    price_full, midline_full, bands, _a, _b, _stdev = result
     if display_start:
         try:
             cut = pd.Timestamp(display_start)
@@ -560,40 +579,65 @@ def build_btc_rainbow_chart(
             midline = midline_full.loc[midline_full.index >= cut]
             if price.empty or midline.empty:
                 price, midline = price_full, midline_full
+                bands_slice = bands
             else:
-                bands = {k: {"lower": v["lower"].loc[v["lower"].index >= cut], "upper": v["upper"].loc[v["upper"].index >= cut]} for k, v in bands.items()}
+                bands_slice = {k: v.loc[v.index >= cut] for k, v in bands.items()}
         except Exception:
             price, midline = price_full, midline_full
+            bands_slice = bands
     else:
         price, midline = price_full, midline_full
+        bands_slice = bands
     if price.empty or midline.empty:
         return None
+    sorted_k = sorted(bands_slice.keys())
+    band_curves = {k: bands_slice[k].reindex(price.index).ffill().bfill() for k in sorted_k}
+    lower_band = band_curves.get(-2.0)
+    upper_band = band_curves.get(2.0)
+    mid_aligned = midline.reindex(price.index).ffill().bfill()
+
     fig = go.Figure()
-    # Bands: fill between lower and upper (outer to inner: 2σ, 1.5σ, 1σ, 0.5σ)
-    sorted_k = sorted(bands.keys(), reverse=True)
-    for i, k in enumerate(sorted_k):
-        lo = bands[k]["lower"].reindex(price.index).ffill().bfill()
-        hi = bands[k]["upper"].reindex(price.index).ffill().bfill()
-        color = RAINBOW_COLORS[i % len(RAINBOW_COLORS)]
-        fig.add_trace(go.Scatter(x=price.index, y=lo.values, mode="lines", line=dict(width=0), name=f"±{k}σ", showlegend=True, hoverinfo="skip"))
-        fig.add_trace(go.Scatter(x=price.index, y=hi.values, mode="lines", line=dict(width=0), fill="tonexty", fillcolor=color, hoverinfo="skip", showlegend=False))
-    # Midline (balanced price)
-    terminal_series = bands.get(2.0, bands[sorted_k[-1]])["lower"] if bands else None
-    terminal_last = float(terminal_series.iloc[-1]) if terminal_series is not None and not terminal_series.empty else None
+    # Fills between adjacent bands (8 regions)
+    for i in range(len(sorted_k) - 1):
+        k_lo, k_hi = sorted_k[i], sorted_k[i + 1]
+        y_lo = band_curves[k_lo].values
+        y_hi = band_curves[k_hi].values
+        color = RAINBOW_GRADIENT[i % len(RAINBOW_GRADIENT)]
+        fig.add_trace(go.Scatter(x=price.index, y=y_lo, mode="lines", line=dict(width=0), fill="tonexty", fillcolor=color, hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(x=price.index, y=y_hi, mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False))
+    # Midline (k=0)
     fig.add_trace(go.Scatter(
         x=midline.index, y=midline.values, mode="lines", name="Balanced (midline)",
         line=dict(color="#8b949e", width=1.5, dash="dash"),
-        hovertemplate="Date: %{x|%Y-%m-%d}<br>Balanced: $%{y:,.0f}<extra></extra>",
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Midline: $%{y:,.0f}<extra></extra>",
     ))
-    # Price on top (hover: price, balanced, terminal)
-    mid_aligned = midline.reindex(price.index).ffill().bfill()
-    term_aligned = terminal_series.reindex(price.index).ffill().bfill() if terminal_series is not None else None
-    customdata = np.column_stack([mid_aligned.values, term_aligned.values]) if term_aligned is not None else np.column_stack([mid_aligned.values, np.full(len(price), terminal_last if terminal_last is not None else np.nan)])
+    # Zone label per point: which [k_lo, k_hi] does price fall in?
+    zone_labels = []
+    for j in range(len(price)):
+        p = price.iloc[j]
+        z = "—"
+        for i in range(len(sorted_k) - 1):
+            k_lo, k_hi = sorted_k[i], sorted_k[i + 1]
+            b_lo = band_curves[k_lo].iloc[j] if j < len(band_curves[k_lo]) else np.nan
+            b_hi = band_curves[k_hi].iloc[j] if j < len(band_curves[k_hi]) else np.nan
+            if pd.notna(b_lo) and pd.notna(b_hi) and min(b_lo, b_hi) <= p <= max(b_lo, b_hi):
+                z = f"k={k_lo} to {k_hi}"
+                break
+        zone_labels.append(z)
+    customdata = np.column_stack([
+        np.asarray(zone_labels),
+        mid_aligned.values,
+        lower_band.values if lower_band is not None else np.full(len(price), np.nan),
+        upper_band.values if upper_band is not None else np.full(len(price), np.nan),
+    ])
     fig.add_trace(go.Scatter(
         x=price.index, y=price.values, mode="lines", name="BTC price",
         line=dict(color="#f0c14b", width=2),
         customdata=customdata,
-        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: $%{y:,.0f}<br>Balanced: $%{customdata[0]:,.0f}<br>Terminal: $%{customdata[1]:,.0f}<extra></extra>",
+        hovertemplate=(
+            "Date: %{x|%Y-%m-%d}<br>BTC: $%{y:,.0f}<br>Zone: %{customdata[0]}<br>"
+            "Midline: $%{customdata[1]:,.0f}<br>Lower (k=-2): $%{customdata[2]:,.0f}<br>Upper (k=+2): $%{customdata[3]:,.0f}<extra></extra>"
+        ),
     ))
     apply_theme(fig, "Bitcoin Rainbow (Log Regression Bands)", height=380)
     if log_scale:
