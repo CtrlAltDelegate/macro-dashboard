@@ -6,19 +6,30 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
-from .theme import apply_theme
+from .theme import apply_theme, AXIS_LIGHT
 from models import (
     compute_valuation_pressure_index,
     compute_macro_risk_composite,
     compute_macro_risk_roc,
     compute_risk_thermostat,
     prepare_rotation_curves,
+    prepare_rotation_zscore,
     prepare_regime_curves,
 )
 
 # Risk band thresholds and labels (0–100 scale)
 THERMO_BANDS = [(0, 20, "Very Low Risk"), (20, 40, "Low Risk"), (40, 60, "Moderate Risk"), (60, 80, "High Risk"), (80, 100, "Extreme Risk")]
 THERMO_HLINES = [20, 40, 60, 80]
+
+# Regimes & Bands tab: 6 zones (user-specified)
+REGIME_BANDS_6 = [
+    (0, 20, "Very Low Risk", "rgba(63, 185, 80, 0.22)"),
+    (20, 40, "Low Risk", "rgba(88, 166, 255, 0.2)"),
+    (40, 60, "Moderate Risk", "rgba(210, 153, 34, 0.25)"),
+    (60, 75, "High Risk", "rgba(248, 140, 60, 0.28)"),
+    (75, 90, "Very High Risk", "rgba(248, 81, 73, 0.3)"),
+    (90, 100, "Extreme Risk", "rgba(139, 50, 50, 0.35)"),
+]
 
 OVERLAY_COLOR = "rgba(140, 140, 140, 0.65)"
 OVERLAY_LINE = dict(color=OVERLAY_COLOR, width=1.2, dash="dash")
@@ -341,12 +352,186 @@ def build_curves_chart(
     return fig
 
 
+def build_oil_chart(
+    oil_df: pd.DataFrame,
+    log_scale: bool = False,
+    show_yoy: bool = False,
+    cpi_yoy_series: pd.Series | None = None,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """WTI spot oil (DCOILWTICO). Optional: log scale, YoY % line, CPI YoY overlay."""
+    if oil_df.empty or "DCOILWTICO" not in oil_df.columns:
+        return None
+    price = oil_df["DCOILWTICO"].dropna()
+    if price.empty or len(price) < 2:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=price.index, y=price.values, mode="lines", name="WTI spot ($)",
+        line=dict(color="#d4a017", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>WTI: $%{y:,.2f}<extra></extra>",
+    ))
+    if show_yoy and len(price) >= 253:
+        yoy = ((price / price.shift(252)) - 1) * 100
+        yoy = yoy.dropna()
+        if not yoy.empty:
+            fig.add_trace(go.Scatter(
+                x=yoy.index, y=yoy.values, mode="lines", name="Oil YoY %",
+                line=dict(color="#a371f7", width=1.5, dash="dash"),
+                yaxis="y2",
+                hovertemplate="Date: %{x|%Y-%m-%d}<br>YoY: %{y:.1f}%<extra></extra>",
+            ))
+            fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, zeroline=True, zerolinecolor="rgba(139,148,158,0.5)", tickfont=dict(color=AXIS_LIGHT, size=11), title=None))
+    if cpi_yoy_series is not None and not cpi_yoy_series.empty and len(cpi_yoy_series) >= 13:
+        cpi_yoy = ((cpi_yoy_series / cpi_yoy_series.shift(12)) - 1) * 100
+        cpi_yoy = cpi_yoy.dropna()
+        common = cpi_yoy.index.intersection(price.index)
+        if len(common) >= 10:
+            cpi_aligned = cpi_yoy.reindex(price.index).ffill().bfill()
+            fig.add_trace(go.Scatter(
+                x=cpi_aligned.index, y=cpi_aligned.values, mode="lines", name="CPI YoY %",
+                line=dict(color="rgba(248, 81, 73, 0.8)", width=1.5, dash="dot"),
+                yaxis="y2",
+                hovertemplate="Date: %{x|%Y-%m-%d}<br>CPI YoY: %{y:.1f}%<extra></extra>",
+            ))
+            if "yaxis2" not in fig.layout or fig.layout.yaxis2 is None:
+                fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, zeroline=True, zerolinecolor="rgba(139,148,158,0.5)", tickfont=dict(color=AXIS_LIGHT, size=11), title=None))
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "WTI Crude Oil (DCOILWTICO)", height=380)
+    if log_scale:
+        fig.update_yaxes(type="log")
+    return fig
+
+
+def build_bitcoin_chart(
+    btc_series: pd.Series,
+    log_scale: bool = True,
+    liquidity_yoy_series: pd.Series | None = None,
+    real_yield_series: pd.Series | None = None,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Bitcoin price (FRED CBBTCUSD or yfinance BTC-USD). Optional: Liquidity YoY, Real yields (DFII10) overlays."""
+    if btc_series is None or btc_series.empty or len(btc_series) < 2:
+        return None
+    price = btc_series.ffill().dropna()
+    if price.empty:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=price.index, y=price.values, mode="lines", name="BTC/USD",
+        line=dict(color="#f0c14b", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>BTC: $%{y:,.0f}<extra></extra>",
+    ))
+    secondary_added = False
+    # liquidity_yoy_series: pre-computed WALCL YoY % (or raw WALCL; we compute YoY if len >= 53)
+    if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
+        ly = liquidity_yoy_series
+        if len(ly) >= 53 and hasattr(ly, "shift"):
+            yoy = ((ly / ly.shift(52)) - 1) * 100
+            yoy = yoy.dropna()
+        else:
+            yoy = ly.dropna()
+        if len(yoy) >= 5:
+            yoy_aligned = yoy.reindex(price.index).ffill().bfill()
+            if yoy_aligned.notna().sum() >= 5:
+                fig.add_trace(go.Scatter(
+                    x=yoy_aligned.index, y=yoy_aligned.values, mode="lines", name="Liquidity YoY %",
+                    line=dict(color="#3fb950", width=1.5, dash="dash"), yaxis="y2",
+                    hovertemplate="Date: %{x|%Y-%m-%d}<br>Liquidity YoY: %{y:.1f}%<extra></extra>",
+                ))
+                secondary_added = True
+    if real_yield_series is not None and not real_yield_series.empty:
+        ry = real_yield_series.reindex(price.index).ffill().bfill().dropna()
+        if len(ry) >= 5:
+            fig.add_trace(go.Scatter(
+                x=ry.index, y=ry.values, mode="lines", name="10Y TIPS yield %",
+                line=dict(color="#58a6ff", width=1.5, dash="dot"), yaxis="y2",
+                hovertemplate="Date: %{x|%Y-%m-%d}<br>Real yield: %{y:.2f}%<extra></extra>",
+            ))
+            secondary_added = True
+    if secondary_added:
+        fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, zeroline=True, zerolinecolor="rgba(139,148,158,0.5)", tickfont=dict(color=AXIS_LIGHT, size=11), title=None))
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "Bitcoin (BTC/USD)", height=380)
+    if log_scale:
+        fig.update_yaxes(type="log")
+    return fig
+
+
+def _zone_index(risk_val: float) -> int:
+    """Return 0..5 for REGIME_BANDS_6."""
+    for i, (lo, hi, _label, _color) in enumerate(REGIME_BANDS_6):
+        if lo <= risk_val < hi:
+            return i
+    if risk_val >= 100:
+        return 5
+    return 0
+
+
+def build_bands_chart(
+    price_series: pd.Series,
+    risk_score_series: pd.Series,
+    title: str,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Asset price with background shading by macro risk zone (0–100). Bands = opportunity vs risk."""
+    if price_series is None or price_series.empty or risk_score_series is None or risk_score_series.empty:
+        return None
+    price = price_series.ffill().dropna()
+    if len(price) < 2:
+        return None
+    risk_aligned = risk_score_series.reindex(price.index).ffill().bfill().dropna()
+    if risk_aligned.empty:
+        return None
+    # Zone per date (0..5)
+    zones = risk_aligned.apply(_zone_index)
+    shapes = []
+    i = 0
+    while i < len(zones):
+        z = zones.iloc[i]
+        j = i
+        while j < len(zones) and zones.iloc[j] == z:
+            j += 1
+        _, _, _label, color = REGIME_BANDS_6[z]
+        x0 = zones.index[i]
+        x1 = zones.index[j - 1] if j > i else zones.index[i]
+        shapes.append(dict(
+            type="rect",
+            xref="x", yref="paper",
+            x0=x0, x1=x1, y0=0, y1=1,
+            fillcolor=color,
+            line=dict(width=0),
+            layer="below",
+        ))
+        i = j
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=price.index, y=price.values, mode="lines", name="Price",
+        line=dict(color="#e6edf3", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(shapes=shapes)
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, title, height=380)
+    return fig
+
+
 def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
     """Build rotation chart from Yahoo ratio data. Returns None if empty."""
     if rot_df.empty:
         return None
     curves = prepare_rotation_curves(rot_df)
     return build_curves_chart(curves, title="Rotation — Relative strength (100 = start)")
+
+
+def build_rotation_ladder_chart(ladder_ratios_df: pd.DataFrame) -> go.Figure | None:
+    """Rotation ladder: z-score normalized ratios (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT) for Tab 3."""
+    if ladder_ratios_df.empty or len(ladder_ratios_df.columns) == 0:
+        return None
+    zscore_df = prepare_rotation_zscore(ladder_ratios_df, window=None)
+    if zscore_df.empty:
+        return None
+    return build_curves_chart(zscore_df, title="Rotation Ladder (z-score normalized ratios)")
 
 
 def build_all_charts(

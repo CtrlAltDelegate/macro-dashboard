@@ -98,3 +98,41 @@ def fetch_liquidity_data(observation_start: str | None = None) -> pd.DataFrame:
     df = pd.DataFrame(out)
     df = df.ffill().dropna(how="all")
     return df
+
+
+def fetch_oil_data(observation_start: str | None = None) -> pd.DataFrame:
+    """Fetch WTI spot oil (DCOILWTICO) for Markets tab."""
+    if not config.FRED_API_KEY:
+        return pd.DataFrame()
+    try:
+        s = fetch_fred_series(config.FRED_OIL, observation_start=observation_start)
+        s = s.ffill().dropna()
+        if s.empty:
+            return pd.DataFrame()
+        return pd.DataFrame({"DCOILWTICO": s})
+    except Exception:
+        return pd.DataFrame()
+
+
+def fetch_bitcoin_fred(observation_start: str | None = None) -> pd.Series:
+    """Fetch Bitcoin price from FRED (CBBTCUSD). Returns empty Series if unavailable."""
+    if not config.FRED_API_KEY:
+        return pd.Series(dtype=float)
+    try:
+        s = fetch_fred_series(config.FRED_BTC, observation_start=observation_start)
+        s = s.ffill().dropna()
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def fetch_real_yield_data(observation_start: str | None = None) -> pd.Series:
+    """Fetch 10-Year TIPS yield (DFII10) for BTC overlay."""
+    if not config.FRED_API_KEY:
+        return pd.Series(dtype=float)
+    try:
+        s = fetch_fred_series(config.FRED_REAL_YIELD, observation_start=observation_start)
+        s = s.ffill().dropna()
+        return s
+    except Exception:
+        return pd.Series(dtype=float)

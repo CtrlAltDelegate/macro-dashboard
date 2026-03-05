@@ -120,3 +120,92 @@ def fetch_rotation_data(
         return ratios.ffill().dropna(how="all")
     except (KeyError, TypeError, AttributeError):
         return pd.DataFrame()
+
+
+def fetch_bitcoin_yfinance(period: str = "5y", interval: str = "1d") -> pd.Series:
+    """Fetch BTC-USD close from Yahoo Finance (fallback when FRED CBBTCUSD unavailable)."""
+    try:
+        data = yf.download(
+            "BTC-USD",
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.Series(dtype=float)
+    if data.empty or "Close" not in data.columns:
+        return pd.Series(dtype=float)
+    s = data["Close"].ffill().dropna()
+    return s
+
+
+def fetch_bitcoin_data(
+    observation_start: str | None,
+    yfinance_period: str = "5y",
+) -> pd.Series:
+    """FRED-first Bitcoin price. Tries CBBTCUSD, then falls back to yfinance BTC-USD."""
+    from .fred_data import fetch_bitcoin_fred
+
+    btc = fetch_bitcoin_fred(observation_start=observation_start)
+    if btc is not None and not btc.empty and len(btc) >= 10:
+        return btc
+    return fetch_bitcoin_yfinance(period=yfinance_period)
+
+
+def fetch_rotation_ladder_data(period: str = "5y", interval: str = "1d") -> pd.DataFrame:
+    """Fetch close prices for rotation ladder pairs (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT). Returns ratio columns."""
+    pairs = getattr(config, "ROTATION_LADDER_PAIRS", [
+        ("ETH-USD", "BTC-USD"),
+        ("BTC-USD", "SPY"),
+        ("SPY", "GLD"),
+        ("GLD", "TLT"),
+    ])
+    tickers = sorted(set(a for a, b in pairs) | set(b for a, b in pairs))
+    try:
+        data = yf.download(
+            tickers,
+            period=period,
+            interval=interval,
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.DataFrame()
+    if data.empty:
+        return pd.DataFrame()
+    try:
+        if isinstance(data.columns, pd.MultiIndex) and "Close" in data.columns.get_level_values(1):
+            close_df = data.xs("Close", axis=1, level=1).copy()
+        else:
+            if "Close" in data.columns:
+                close_df = data[["Close"]].copy() if isinstance(data["Close"], pd.Series) else data["Close"].copy()
+                if isinstance(close_df, pd.Series):
+                    close_df = close_df.to_frame(tickers[0] if tickers else "Close")
+            else:
+                return pd.DataFrame()
+        if isinstance(close_df, pd.Series):
+            close_df = close_df.to_frame(close_df.name or tickers[0])
+        available = [c for c in tickers if c in close_df.columns]
+        if len(available) < 2:
+            return pd.DataFrame()
+        closes = close_df[available].ffill().dropna(how="all")
+        if closes.empty:
+            return pd.DataFrame()
+        name_map = {
+            ("ETH-USD", "BTC-USD"): "ETH/BTC",
+            ("BTC-USD", "SPY"): "BTC/SPY",
+            ("SPY", "GLD"): "SPY/GLD",
+            ("GLD", "TLT"): "GLD/TLT",
+        }
+        ratios = pd.DataFrame(index=closes.index)
+        for (a, b) in pairs:
+            if a in closes.columns and b in closes.columns:
+                label = name_map.get((a, b), f"{a}/{b}")
+                ratios[label] = closes[a] / closes[b]
+        return ratios.ffill().dropna(how="all")
+    except (KeyError, TypeError, AttributeError):
+        return pd.DataFrame()

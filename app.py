@@ -40,9 +40,23 @@ from charts.build import (
     build_thermostat_chart,
     build_rotation_chart,
     build_curves_chart,
+    build_oil_chart,
+    build_bitcoin_chart,
+    build_bands_chart,
+    build_rotation_ladder_chart,
 )
-from data import fetch_valuation_data, fetch_macro_risk_data, fetch_yield_curve_data, fetch_liquidity_data, fetch_rotation_data
-from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_rotation_curves, prepare_regime_curves
+from data import (
+    fetch_valuation_data,
+    fetch_macro_risk_data,
+    fetch_yield_curve_data,
+    fetch_liquidity_data,
+    fetch_rotation_data,
+    fetch_oil_data,
+    fetch_bitcoin_data,
+    fetch_real_yield_data,
+)
+from data.market_data import fetch_rotation_ladder_data
+from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_regime_curves
 
 try:
     from pdf_report import build_dashboard_pdf, pdf_available
@@ -158,7 +172,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("# Macro Dashboard")
-st.markdown('<p class="subtitle">Global Liquidity · Stock Market Pressure · Economic Risk · Yield Curve · Financial Conditions · Credit Spreads · Market Risk Level · Rotation</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Macro (Core) · Markets (Oil, BTC) · Regimes & Bands</p>', unsafe_allow_html=True)
 
 if not config.FRED_API_KEY:
     # Brief diagnostic (no secret values): helps debug Streamlit Cloud Secrets
@@ -188,10 +202,18 @@ with st.sidebar:
     show_market_overlay = st.checkbox("Show Market Overlay (S&P 500)", value=False)
     show_10y_3m_lines = st.checkbox("Show 10Y and 3M lines (Yield Curve)", value=False)
     show_event_markers = st.checkbox("Show event markers", value=False)
+    st.subheader("Markets")
+    oil_log_scale = st.checkbox("Oil: log scale", value=False)
+    oil_show_yoy = st.checkbox("Oil: show YoY %", value=False)
+    oil_show_cpi = st.checkbox("Oil: show CPI YoY overlay", value=False)
+    btc_log_scale = st.checkbox("Bitcoin: log scale", value=True)
+    btc_show_liquidity = st.checkbox("Bitcoin: overlay Liquidity YoY", value=False)
+    btc_show_real_yield = st.checkbox("Bitcoin: overlay Real yields (10Y TIPS)", value=False)
+    st.subheader("Regimes & Bands")
     use_fred_only_last_chart = st.checkbox(
-        "Use FRED only for last chart (no Yahoo)",
+        "Use FRED-only for final chart (no Yahoo)",
         value=False,
-        help="Use macro series from FRED only for chart 8. No API key; works when Yahoo is blocked or rate-limited.",
+        help="Show Macro Regime (FRED) instead of Rotation Ladder when Yahoo is blocked.",
     )
     if st.button("Refresh data"):
         st.cache_data.clear()
@@ -209,13 +231,35 @@ def load_all(lookback: str):
         rot_df = fetch_rotation_data(period=rot_period)
     except Exception:
         rot_df = pd.DataFrame()
-    return val_df, risk_df, yield_df, liquidity_df, rot_df
+    oil_df = pd.DataFrame()
+    btc_series = pd.Series(dtype=float)
+    real_yield_series = pd.Series(dtype=float)
+    if config.FRED_API_KEY:
+        try:
+            oil_df = fetch_oil_data(observation_start=obs_start)
+        except Exception:
+            pass
+        try:
+            btc_series = fetch_bitcoin_data(observation_start=obs_start, yfinance_period=rot_period)
+        except Exception:
+            pass
+        try:
+            real_yield_series = fetch_real_yield_data(observation_start=obs_start)
+        except Exception:
+            pass
+    try:
+        ladder_df = fetch_rotation_ladder_data(period=rot_period)
+    except Exception:
+        ladder_df = pd.DataFrame()
+    return val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df
 
 try:
-    val_df, risk_df, yield_df, liquidity_df, rot_df = load_all(lookback)
+    val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df = load_all(lookback)
 except Exception as e:
     st.error(f"Data load failed: {e}")
-    val_df, risk_df, yield_df, liquidity_df, rot_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    val_df = risk_df = yield_df = liquidity_df = rot_df = oil_df = pd.DataFrame()
+    btc_series = real_yield_series = pd.Series(dtype=float)
+    ladder_df = pd.DataFrame()
 
 # Optional S&P 500 overlay (SPX/SP500 from valuation data), aligned to each chart's lookback
 overlay_val = None
@@ -228,6 +272,20 @@ if show_market_overlay and not val_df.empty and "SP500" in val_df.columns:
         aligned = val_df["SP500"].reindex(risk_df.index).ffill().dropna()
         if not aligned.empty and aligned.iloc[0] != 0:
             overlay_risk = (aligned / aligned.iloc[0]) * 100
+
+# Thermo (0-100) for Regimes bands and readout
+thermo_series = pd.Series(dtype=float)
+if not risk_df.empty:
+    raw = compute_macro_risk_composite(risk_df)
+    thermo_series = compute_risk_thermostat(raw)
+# Liquidity YoY for BTC overlay (WALCL is weekly)
+liquidity_yoy_series = None
+if not liquidity_df.empty and "WALCL" in liquidity_df.columns and len(liquidity_df["WALCL"]) >= 53:
+    walcl = liquidity_df["WALCL"].dropna()
+    liquidity_yoy_series = ((walcl / walcl.shift(52)) - 1) * 100
+    liquidity_yoy_series = liquidity_yoy_series.dropna()
+# CPI for oil overlay (from macro risk INFLATION = CPIAUCSL)
+cpi_series = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else None
 
 
 def _thermo_zone(value: float) -> str:
@@ -318,166 +376,223 @@ if credit_status:
 if chips:
     st.markdown('<div class="readout-panel">' + "".join(chips) + "</div>", unsafe_allow_html=True)
 
-# Initialize PNG bytes for PDF (set when each chart is built)
-png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
-
-# ----- Chart 1: Global Liquidity -----
-st.header("1. Global Liquidity")
-st.markdown(
-    '<p class="section-desc">This chart tracks whether liquidity is expanding or contracting. '
-    'Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.</p>',
-    unsafe_allow_html=True,
-)
-fig_liquidity = build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers)
-if fig_liquidity is not None:
-    st.plotly_chart(fig_liquidity, width="stretch", key="liquidity")
-    png_liq, _ = _try_export_png(fig_liquidity)
-    if png_liq is not None:
-        st.download_button("Export PNG", data=png_liq, file_name="01_global_liquidity.png", mime="image/png", key="dl_liquidity")
-else:
-    st.info("Not enough liquidity data. Check FRED series WALCL (need 53+ weekly points for YoY).")
-
-# ----- Chart 2: Stock Market Pressure -----
-st.header("2. Stock Market Pressure")
-st.markdown(
-    '<p class="section-desc">This chart measures how much pressure the overall economy is placing on stock prices. '
-    'It combines major forces like interest rates, inflation, unemployment, and liquidity. '
-    'Higher values mean more pressure on valuations, which can make it harder for the market to move higher. '
-    'Lower values mean less pressure, which tends to support stocks.</p>',
-    unsafe_allow_html=True,
-)
-fig1 = build_valuation_chart(val_df, overlay_series=overlay_val, show_event_markers=show_event_markers)
-if fig1 is not None:
-    st.plotly_chart(fig1, width="stretch", key="vpi")
-    png1, _ = _try_export_png(fig1)
-    if png1 is not None:
-        st.download_button("Export PNG", data=png1, file_name="02_stock_market_pressure.png", mime="image/png", key="dl_vpi")
-else:
-    st.info("Not enough valuation data. Check FRED_API_KEY and series availability.")
-
-# ----- Chart 3: Economic Risk Index -----
-st.header("3. Economic Risk Index")
-st.markdown(
-    '<p class="section-desc">This chart tracks the overall level of stress in the economy by combining multiple macro '
-    'indicators into one score. The goal is to measure how stable or unstable the environment is for markets. '
-    'The blue line shows current risk level, and the ROC line shows how quickly conditions are changing. '
-    'Sharp increases often signal rising instability before markets fully react.</p>',
-    unsafe_allow_html=True,
-)
-fig2 = build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers)
-if fig2 is not None:
-    st.plotly_chart(fig2, width="stretch", key="macro_risk")
-    png2, _ = _try_export_png(fig2)
-    if png2 is not None:
-        st.download_button("Export PNG", data=png2, file_name="03_economic_risk_index.png", mime="image/png", key="dl_macro")
-else:
-    st.info("Not enough macro risk data.")
-
-# ----- Chart 4: Yield Curve (10Y – 3M) + Momentum -----
-st.header("4. Yield Curve (10Y – 3M) + Momentum")
-st.markdown(
-    '<p class="section-desc">This chart shows the difference between long-term and short-term U.S. Treasury interest rates. '
-    'When short-term rates rise above long-term rates (an inverted yield curve), it has historically signaled increasing recession risk.</p>',
-    unsafe_allow_html=True,
-)
-fig_yield = build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m_lines, show_event_markers=show_event_markers)
-if fig_yield is not None:
-    st.plotly_chart(fig_yield, width="stretch", key="yield_curve")
-    png_yield, _ = _try_export_png(fig_yield)
-    if png_yield is not None:
-        st.download_button("Export PNG", data=png_yield, file_name="04_yield_curve_10y_3m.png", mime="image/png", key="dl_yield")
-else:
-    st.info("Not enough yield curve data. Check FRED series DGS10 and DGS3MO.")
-
-# ----- Chart 5: Financial Conditions Index -----
-st.header("5. Financial Conditions Index")
-st.markdown(
-    '<p class="section-desc">Chicago Fed National Financial Conditions Index (NFCI). '
-    'Higher values indicate tighter financial conditions (more stress); lower values indicate easier conditions (more support for risk assets). Zero is the baseline.</p>',
-    unsafe_allow_html=True,
-)
-fig_fci = build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers)
-if fig_fci is not None:
-    st.plotly_chart(fig_fci, width="stretch", key="fci")
-    png_fci, _ = _try_export_png(fig_fci)
-    if png_fci is not None:
-        st.download_button("Export PNG", data=png_fci, file_name="05_financial_conditions_index.png", mime="image/png", key="dl_fci")
-else:
-    st.info("Not enough data for Financial Conditions Index. NFCI (FRED) required.")
-
-# ----- Chart 6: Credit Spreads -----
-st.header("6. Credit Spreads (High Yield OAS)")
-st.markdown(
-    '<p class="section-desc">ICE BofA US High Yield Option-Adjusted Spread. '
-    'Rising spreads mean credit is getting more expensive and stress is increasing. Reference lines: 3% (calm), 5% (stress rising), 7% (high stress).</p>',
-    unsafe_allow_html=True,
-)
-fig_credit = build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers)
-if fig_credit is not None:
-    st.plotly_chart(fig_credit, width="stretch", key="credit")
-    png_credit, _ = _try_export_png(fig_credit)
-    if png_credit is not None:
-        st.download_button("Export PNG", data=png_credit, file_name="06_credit_spreads.png", mime="image/png", key="dl_credit")
-else:
-    st.info("Not enough data for Credit Spreads. BAMLH0A0HYM2 (FRED) required.")
-
-# ----- Chart 7: Market Risk Level 0–100 -----
-st.header("7. Market Risk Level (0–100)")
-st.markdown(
-    '<p class="section-desc">This chart converts complex macro signals into a simple risk score from 0 to 100. '
-    'Lower scores suggest a stable environment where markets typically perform better. '
-    'Higher scores suggest growing stress in the financial system. '
-    'The colored bands show whether conditions look very low risk through extreme risk.</p>',
-    unsafe_allow_html=True,
-)
-fig3 = build_thermostat_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers)
-if fig3 is not None:
-    raw = compute_macro_risk_composite(risk_df)
-    thermo = compute_risk_thermostat(raw)
-    latest = thermo.iloc[-1] if not thermo.empty else 0
-    st.plotly_chart(fig3, width="stretch", key="thermo")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Current reading", f"{latest:.0f}", "0–100 scale")
-    with col2:
-        st.metric("Zone", _thermo_zone(latest), "")
-    png3, _ = _try_export_png(fig3)
-    if png3 is not None:
-        st.download_button("Export PNG", data=png3, file_name="07_market_risk_level.png", mime="image/png", key="dl_thermo")
-else:
-    st.info("Requires macro risk data.")
-
-# ----- Chart 8: Risk Cascade (Rotation) or Macro Regime (FRED) -----
-use_fred_for_last = use_fred_only_last_chart or rot_df.empty
-if use_fred_for_last:
+# Build Tab 3 "last" chart once for PDF (rotation ladder or FRED regime)
+fig4 = None
+last_chart_header = "8. Rotation Ladder"
+last_chart_desc = "Z-score normalized relative strength ratios (risk-on → defensive). Higher line = that ratio outperforming."
+if use_fred_only_last_chart or ladder_df.empty:
     regime_curves = prepare_regime_curves(val_df, risk_df)
     fig4 = build_curves_chart(regime_curves, title="Macro Regime (FRED) — 100 = start")
     last_chart_header = "8. Macro Regime (FRED)"
-    last_chart_desc = (
-        "This chart uses only FRED data (no Yahoo): S&P 500, Fed liquidity (WALCL), "
-        "Financial Conditions (NFCI), and High Yield spread — each rebased to 100 at the start. "
-        "Use it when Yahoo Finance is unavailable or you prefer FRED-only sources."
-    )
-    last_chart_filename = "08_macro_regime_fred.png"
+    last_chart_desc = "FRED-only: S&P 500, Liquidity (WALCL), NFCI, HY spread — rebased to 100 at start."
 else:
-    fig4 = build_rotation_chart(rot_df)
-    last_chart_header = "8. Risk Cascade Curves (Rotation)"
-    last_chart_desc = (
-        "This chart shows how different parts of the market are performing relative to each other over time. "
-        "Each line is rebased to 100 at the start so you can see which segments are strengthening or weakening. "
-        "It helps spot when investors are moving into safer assets (defensives) or taking more risk (small caps, crypto)."
-    )
-    last_chart_filename = "08_risk_cascade_rotation.png"
+    fig4 = build_rotation_ladder_chart(ladder_df)
 
-st.header(last_chart_header)
-st.markdown(f'<p class="section-desc">{last_chart_desc}</p>', unsafe_allow_html=True)
-if fig4 is not None:
-    st.plotly_chart(fig4, width="stretch", key="rotation")
-    png4, _ = _try_export_png(fig4)
-    if png4 is not None:
-        st.download_button("Export PNG", data=png4, file_name=last_chart_filename, mime="image/png", key="dl_rot")
-else:
-    st.info("Chart data could not be loaded. Try \"Use FRED only for last chart\" if Yahoo fails.")
+# Initialize PNG bytes for PDF (set when each chart is built)
+png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
+
+# ----- Tabs: Macro (Core) | Markets | Regimes & Bands -----
+tab_macro, tab_markets, tab_regimes = st.tabs(["Macro (Core)", "Markets", "Regimes & Bands"])
+
+with tab_macro:
+    # ----- Chart 1: Global Liquidity -----
+    st.header("1. Global Liquidity")
+    st.markdown(
+        '<p class="section-desc">This chart tracks whether liquidity is expanding or contracting. '
+        'Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_liquidity = build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers)
+    if fig_liquidity is not None:
+        st.plotly_chart(fig_liquidity, width="stretch", key="liquidity")
+        png_liq, _ = _try_export_png(fig_liquidity)
+        if png_liq is not None:
+            st.download_button("Export PNG", data=png_liq, file_name="01_global_liquidity.png", mime="image/png", key="dl_liquidity")
+    else:
+        st.info("Not enough liquidity data. Check FRED series WALCL (need 53+ weekly points for YoY).")
+
+    st.header("2. Stock Market Pressure")
+    st.markdown(
+        '<p class="section-desc">This chart measures how much pressure the overall economy is placing on stock prices. '
+        'It combines major forces like interest rates, inflation, unemployment, and liquidity. '
+        'Higher values mean more pressure on valuations, which can make it harder for the market to move higher. '
+        'Lower values mean less pressure, which tends to support stocks.</p>',
+        unsafe_allow_html=True,
+    )
+    fig1 = build_valuation_chart(val_df, overlay_series=overlay_val, show_event_markers=show_event_markers)
+    if fig1 is not None:
+        st.plotly_chart(fig1, width="stretch", key="vpi")
+        png1, _ = _try_export_png(fig1)
+        if png1 is not None:
+            st.download_button("Export PNG", data=png1, file_name="02_stock_market_pressure.png", mime="image/png", key="dl_vpi")
+    else:
+        st.info("Not enough valuation data. Check FRED_API_KEY and series availability.")
+
+    st.header("3. Economic Risk Index")
+    st.markdown(
+        '<p class="section-desc">This chart tracks the overall level of stress in the economy by combining multiple macro '
+        'indicators into one score. The goal is to measure how stable or unstable the environment is for markets. '
+        'The blue line shows current risk level, and the ROC line shows how quickly conditions are changing. '
+        'Sharp increases often signal rising instability before markets fully react.</p>',
+        unsafe_allow_html=True,
+    )
+    fig2 = build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers)
+    if fig2 is not None:
+        st.plotly_chart(fig2, width="stretch", key="macro_risk")
+        png2, _ = _try_export_png(fig2)
+        if png2 is not None:
+            st.download_button("Export PNG", data=png2, file_name="03_economic_risk_index.png", mime="image/png", key="dl_macro")
+    else:
+        st.info("Not enough macro risk data.")
+
+    st.header("4. Yield Curve (10Y – 3M) + Momentum")
+    st.markdown(
+        '<p class="section-desc">This chart shows the difference between long-term and short-term U.S. Treasury interest rates. '
+        'When short-term rates rise above long-term rates (an inverted yield curve), it has historically signaled increasing recession risk.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_yield = build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m_lines, show_event_markers=show_event_markers)
+    if fig_yield is not None:
+        st.plotly_chart(fig_yield, width="stretch", key="yield_curve")
+        png_yield, _ = _try_export_png(fig_yield)
+        if png_yield is not None:
+            st.download_button("Export PNG", data=png_yield, file_name="04_yield_curve_10y_3m.png", mime="image/png", key="dl_yield")
+    else:
+        st.info("Not enough yield curve data. Check FRED series DGS10 and DGS3MO.")
+
+    st.header("5. Financial Conditions Index")
+    st.markdown(
+        '<p class="section-desc">Chicago Fed National Financial Conditions Index (NFCI). '
+        'Higher values indicate tighter financial conditions (more stress); lower values indicate easier conditions (more support for risk assets). Zero is the baseline.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_fci = build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers)
+    if fig_fci is not None:
+        st.plotly_chart(fig_fci, width="stretch", key="fci")
+        png_fci, _ = _try_export_png(fig_fci)
+        if png_fci is not None:
+            st.download_button("Export PNG", data=png_fci, file_name="05_financial_conditions_index.png", mime="image/png", key="dl_fci")
+    else:
+        st.info("Not enough data for Financial Conditions Index. NFCI (FRED) required.")
+
+    st.header("6. Credit Spreads (High Yield OAS)")
+    st.markdown(
+        '<p class="section-desc">ICE BofA US High Yield Option-Adjusted Spread. '
+        'Rising spreads mean credit is getting more expensive and stress is increasing. Reference lines: 3% (calm), 5% (stress rising), 7% (high stress).</p>',
+        unsafe_allow_html=True,
+    )
+    fig_credit = build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers)
+    if fig_credit is not None:
+        st.plotly_chart(fig_credit, width="stretch", key="credit")
+        png_credit, _ = _try_export_png(fig_credit)
+        if png_credit is not None:
+            st.download_button("Export PNG", data=png_credit, file_name="06_credit_spreads.png", mime="image/png", key="dl_credit")
+    else:
+        st.info("Not enough data for Credit Spreads. BAMLH0A0HYM2 (FRED) required.")
+
+    st.header("7. Market Risk Level (0–100)")
+    st.markdown(
+        '<p class="section-desc">This chart converts complex macro signals into a simple risk score from 0 to 100. '
+        'Lower scores suggest a stable environment where markets typically perform better. '
+        'Higher scores suggest growing stress in the financial system. '
+        'The colored bands show whether conditions look very low risk through extreme risk.</p>',
+        unsafe_allow_html=True,
+    )
+    fig3 = build_thermostat_chart(
+        risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers
+    )
+    if fig3 is not None:
+        latest = thermo_series.iloc[-1] if not thermo_series.empty else 0
+        st.plotly_chart(fig3, width="stretch", key="thermo")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Current reading", f"{latest:.0f}", "0–100 scale")
+        with col2:
+            st.metric("Zone", _thermo_zone(latest), "")
+        png3, _ = _try_export_png(fig3)
+        if png3 is not None:
+            st.download_button("Export PNG", data=png3, file_name="07_market_risk_level.png", mime="image/png", key="dl_thermo")
+    else:
+        st.info("Requires macro risk data.")
+
+with tab_markets:
+    st.header("Oil (WTI)")
+    st.markdown(
+        '<p class="section-desc">WTI spot price (FRED DCOILWTICO). Use toggles for log scale, YoY % change, and CPI YoY overlay.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_oil = build_oil_chart(
+        oil_df,
+        log_scale=oil_log_scale,
+        show_yoy=oil_show_yoy,
+        cpi_yoy_series=cpi_series,
+        show_event_markers=show_event_markers,
+    )
+    if fig_oil is not None:
+        st.plotly_chart(fig_oil, width="stretch", key="oil")
+    else:
+        st.info("Not enough oil data. Check FRED DCOILWTICO and API key.")
+
+    st.header("Bitcoin (BTC/USD)")
+    st.markdown(
+        '<p class="section-desc">Bitcoin price from FRED (CBBTCUSD) or Yahoo Finance. Overlays: Liquidity YoY (WALCL), 10Y TIPS real yield.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_btc = build_bitcoin_chart(
+        btc_series,
+        log_scale=btc_log_scale,
+        liquidity_yoy_series=liquidity_yoy_series if btc_show_liquidity else None,
+        real_yield_series=real_yield_series if btc_show_real_yield else None,
+        show_event_markers=show_event_markers,
+    )
+    if fig_btc is not None:
+        st.plotly_chart(fig_btc, width="stretch", key="btc")
+    else:
+        st.info("Not enough Bitcoin data. Try FRED CBBTCUSD or Yahoo BTC-USD.")
+
+with tab_regimes:
+    st.markdown(
+        "**Macro Risk Bands** use the Market Risk Level (0–100) to shade each chart by regime. "
+        "Green/blue = lower risk (opportunity); yellow/orange/red = higher risk (caution)."
+    )
+    sp500_series = val_df["SP500"].dropna() if not val_df.empty and "SP500" in val_df.columns else pd.Series(dtype=float)
+    if not sp500_series.empty and not thermo_series.empty:
+        st.subheader("S&P 500 with risk bands")
+        st.caption("Background color shows macro risk zone over time. Price (white line) on top.")
+        fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers)
+        if fig_bands_spx is not None:
+            st.plotly_chart(fig_bands_spx, width="stretch", key="bands_spx")
+    else:
+        st.info("Need valuation and risk data for S&P 500 bands.")
+
+    if not btc_series.empty and not thermo_series.empty:
+        st.subheader("Bitcoin with risk bands")
+        st.caption("BTC price with same macro risk zone shading.")
+        fig_bands_btc = build_bands_chart(btc_series, thermo_series, "Bitcoin — Macro Risk Bands", show_event_markers=show_event_markers)
+        if fig_bands_btc is not None:
+            st.plotly_chart(fig_bands_btc, width="stretch", key="bands_btc")
+    else:
+        st.info("Need Bitcoin and risk data for bands.")
+
+    oil_price_series = oil_df["DCOILWTICO"].dropna() if not oil_df.empty and "DCOILWTICO" in oil_df.columns else pd.Series(dtype=float)
+    if not oil_price_series.empty and not thermo_series.empty:
+        st.subheader("Oil (WTI) with risk bands")
+        st.caption("Oil price with macro risk zone shading.")
+        fig_bands_oil = build_bands_chart(oil_price_series, thermo_series, "WTI Oil — Macro Risk Bands", show_event_markers=show_event_markers)
+        if fig_bands_oil is not None:
+            st.plotly_chart(fig_bands_oil, width="stretch", key="bands_oil")
+    else:
+        st.info("Need oil and risk data for bands.")
+
+    st.subheader(last_chart_header)
+    st.markdown(f'<p class="section-desc">{last_chart_desc}</p>', unsafe_allow_html=True)
+    if fig4 is not None:
+        st.plotly_chart(fig4, width="stretch", key="rotation")
+        png4, _ = _try_export_png(fig4)
+        if png4 is not None:
+            st.download_button("Export PNG", data=png4, file_name="08_rotation_ladder.png", mime="image/png", key="dl_rot")
+    else:
+        st.info("Chart data could not be loaded. Try \"Use FRED-only for final chart\" if Yahoo fails.")
 
 # ----- Generate PDF -----
 if pdf_available() and build_dashboard_pdf:

@@ -91,6 +91,12 @@ FRED_LIQUIDITY = {
     "WALCL": "WALCL",     # Fed total assets (balance sheet)
 }
 
+# Markets tab — Oil (FRED), Bitcoin (FRED then yfinance fallback)
+FRED_OIL = "DCOILWTICO"   # WTI spot oil
+FRED_BTC = "CBBTCUSD"     # Coinbase BTC/USD (FRED)
+FRED_CPI = "CPIAUCSL"     # CPI (for oil overlay; also in FRED_MACRO_RISK as INFLATION)
+FRED_REAL_YIELD = "DFII10"  # 10-Year TIPS yield (real yields for BTC overlay)
+
 # Chart 6 — Rotation (Yahoo Finance tickers; FRED has limited ETF/crypto)
 ROTATION_PAIRS = [
     ("ALT", "BTC-USD"),   # Alts vs Bitcoin (use ETH-USD or a basket as ALT proxy)
@@ -101,3 +107,11 @@ ROTATION_PAIRS = [
 ]
 # If no ALT ticker, we use ETH-USD as first “risk” asset
 ROTATION_ALT_TICKER = "ETH-USD"
+
+# Tab 3 — Rotation ladder (z-score normalized ratios). Order: risk-on → defensive.
+ROTATION_LADDER_PAIRS = [
+    ("ETH-USD", "BTC-USD"),  # ALTS/BTC
+    ("BTC-USD", "SPY"),      # BTC/SPX
+    ("SPY", "GLD"),          # SPX/Gold
+    ("GLD", "TLT"),          # Gold/Bonds
+]
