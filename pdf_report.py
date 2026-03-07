@@ -73,6 +73,8 @@ class SummarySection(TypedDict, total=False):
     data_sources: str
     snapshot: SnapshotDict
     radar_png_bytes: bytes | None
+    ai_summary: dict | None  # executive_summary, what_changed, what_to_watch, drivers_paragraph
+    macro_drivers: list | None  # [{title, source, date, link, summary}]
 
 
 class ChartSection(TypedDict, total=False):
@@ -140,6 +142,49 @@ def _add_snapshot_table(
     story.append(Paragraph("Today's Snapshot", snapshot_heading_style))
     story.append(tbl)
     story.append(Spacer(1, 0.2 * inch))
+
+
+def _escape(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _add_ai_summary_and_drivers(
+    story: list,
+    first: dict,
+    snapshot_heading_style: Any,
+    body_style: Any,
+) -> None:
+    """Append AI Executive Summary and Macro Drivers to Page 1 if present."""
+    from reportlab.lib.units import inch
+    ai = first.get("ai_summary") or {}
+    drivers = first.get("macro_drivers") or []
+    if ai.get("executive_summary"):
+        story.append(Spacer(1, 0.2 * inch))
+        story.append(Paragraph("AI Executive Summary", snapshot_heading_style))
+        story.append(Paragraph(_escape(ai["executive_summary"]).replace("\n", "<br/>"), body_style))
+    if ai.get("what_changed"):
+        story.append(Paragraph("<b>What changed</b>", snapshot_heading_style))
+        story.append(Paragraph(_escape(ai["what_changed"]), body_style))
+    if ai.get("what_to_watch"):
+        story.append(Paragraph("<b>What to watch</b>", snapshot_heading_style))
+        story.append(Paragraph(_escape(ai["what_to_watch"]), body_style))
+    if ai.get("drivers_paragraph"):
+        story.append(Paragraph(_escape(ai["drivers_paragraph"]), body_style))
+    if drivers:
+        story.append(Spacer(1, 0.15 * inch))
+        story.append(Paragraph("Macro Drivers", snapshot_heading_style))
+        for i, a in enumerate(drivers[:5], 1):
+            title = _escape(a.get("title") or "")
+            source = _escape(a.get("source") or "")
+            d = a.get("date") or ""
+            summary = _escape(a.get("summary") or "")
+            line = f"<b>{i}. {title}</b> — {source}"
+            if d:
+                line += f" ({d})"
+            story.append(Paragraph(line, body_style))
+            if summary:
+                story.append(Paragraph(summary, body_style))
+        story.append(Spacer(1, 0.15 * inch))
 
 
 def build_dashboard_pdf(
@@ -283,6 +328,8 @@ def build_dashboard_pdf(
                 story.append(rad_img)
             except Exception:
                 story.append(Paragraph("[Macro Radar chart could not be embedded.]", placeholder_style))
+        story.append(Spacer(1, 0.2 * inch))
+        _add_ai_summary_and_drivers(story, first, snapshot_heading_style, body_style)
         story.append(Spacer(1, 0.3 * inch))
 
         chart_sections = sections[1:]

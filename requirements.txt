@@ -9,3 +9,8 @@ python-dotenv>=1.0.0
 # Use 0.2.1 to avoid Chrome dependency (1.x requires Chrome)
 kaleido==0.2.1
 reportlab>=4.0.0
+# AI interpretation (optional)
+openai>=1.0.0
+# Macro Drivers news (RSS, no key)
+feedparser>=6.0.0
+requests>=2.28.0

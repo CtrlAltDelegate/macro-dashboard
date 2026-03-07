@@ -68,6 +68,8 @@ Or run `scripts\refresh.ps1` from the project root. Output:
 
 - **Macro**: FRED (St. Louis Fed) — free with API key.
 - **Rotation (Chart 4)**: Yahoo Finance — no key required.
+- **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
+- **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash.
 
 ## Troubleshooting
 

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import streamlit as st
 
-# Streamlit Cloud: secrets in st.secrets; put FRED_API_KEY into env so config/data layers see it
+# Streamlit Cloud: secrets in st.secrets; put FRED_API_KEY and OPENAI_API_KEY into env
 try:
     if hasattr(st, "secrets"):
         val = getattr(st.secrets, "get", lambda k: None)("FRED_API_KEY") or getattr(st.secrets, "FRED_API_KEY", None)
@@ -22,6 +22,9 @@ try:
             val = st.secrets["FRED_API_KEY"]
         if val:
             os.environ.setdefault("FRED_API_KEY", str(val))
+        ak = getattr(st.secrets, "get", lambda k: None)("OPENAI_API_KEY") or getattr(st.secrets, "OPENAI_API_KEY", None)
+        if ak:
+            os.environ.setdefault("OPENAI_API_KEY", str(ak))
 except Exception:
     pass
 
@@ -70,6 +73,17 @@ try:
 except ImportError:
     build_dashboard_pdf = None
     pdf_available = lambda: False
+try:
+    from news import fetch_recent_macro_news, rank_macro_relevance
+except ImportError:
+    fetch_recent_macro_news = lambda *a, **k: []
+    rank_macro_relevance = lambda x, max_return=5: x[:max_return]
+try:
+    from ai_summary import build_macro_signal_payload, generate_ai_summary, ai_summary_available
+except ImportError:
+    build_macro_signal_payload = lambda **k: {}
+    generate_ai_summary = lambda *a, **k: None
+    ai_summary_available = lambda: False
 
 
 def _try_export_png(fig):
@@ -254,6 +268,13 @@ with st.sidebar:
         value=False,
         help="Show Macro Regime (FRED) instead of Rotation Ladder when Yahoo is blocked.",
     )
+    st.subheader("AI & News")
+    enable_ai = st.checkbox(
+        "Enable AI Interpretation",
+        value=bool(getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")),
+        help="Show AI-generated executive summary and interpretation. Requires OPENAI_API_KEY.",
+    )
+    include_macro_drivers = st.checkbox("Include Macro Drivers headlines", value=True, help="Show 3–5 recent macro-relevant headlines.")
     if st.button("Refresh data"):
         st.cache_data.clear()
         st.rerun()
@@ -467,6 +488,63 @@ if credit_status:
 if chips:
     st.markdown('<div class="readout-panel">' + "".join(chips) + "</div>", unsafe_allow_html=True)
 
+# ----- AI Interpretation + Macro Drivers -----
+ai_result = None
+macro_drivers_list = []
+if include_macro_drivers:
+    with st.spinner("Fetching macro headlines…"):
+        _news = fetch_recent_macro_news(max_articles=12, max_age_days=7)
+        macro_drivers_list = rank_macro_relevance(_news, max_return=5)
+if enable_ai and (getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")):
+    payload = build_macro_signal_payload(
+        macro_risk_score=float(thermo_series.iloc[-1]) if not thermo_series.empty else None,
+        macro_risk_zone=zone_label or None,
+        liquidity_yoy=float(liquidity_yoy_series.iloc[-1]) if liquidity_yoy_series is not None and not liquidity_yoy_series.empty else None,
+        liquidity_trend="improving" if liquidity_status == "Expanding" else ("contracting" if liquidity_status == "Contracting" else None),
+        yield_curve_spread=last_spread_val,
+        yield_curve_state=yield_status or None,
+        yield_curve_momentum=last_roc_90_val,
+        credit_spread=float(risk_df["CREDIT_STRESS"].iloc[-1]) if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns and len(risk_df["CREDIT_STRESS"].dropna()) else None,
+        credit_stress_state=credit_status or None,
+        financial_conditions=fci_status or None,
+        spx_regime_zone=zone_label or None,
+        btc_price=float(btc_snapshot.get("price")) if btc_snapshot and btc_snapshot.get("price") is not None else None,
+        btc_zone="mid-band",
+        oil_price=float(oil_snapshot.get("price")) if oil_snapshot and oil_snapshot.get("price") is not None else None,
+        oil_roc_1y=float(oil_snapshot.get("roc52w")) if oil_snapshot and oil_snapshot.get("roc52w") is not None else None,
+        deficit_pct_gdp=float(fiscal_df["DEFICIT_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "DEFICIT_PCT_GDP" in fiscal_df.columns and not fiscal_df["DEFICIT_PCT_GDP"].dropna().empty else None,
+        debt_to_gdp=float(fiscal_df["DEBT_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "DEBT_PCT_GDP" in fiscal_df.columns and not fiscal_df["DEBT_PCT_GDP"].dropna().empty else None,
+        interest_burden_pct=float(fiscal_df["INTEREST_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "INTEREST_PCT_GDP" in fiscal_df.columns and not fiscal_df["INTEREST_PCT_GDP"].dropna().empty else None,
+    )
+    with st.spinner("Generating AI interpretation…"):
+        ai_result = generate_ai_summary(payload, macro_drivers_list, date.today().isoformat())
+
+if enable_ai or include_macro_drivers:
+    if ai_result:
+        st.markdown("#### AI Interpretation")
+        with st.container():
+            st.markdown("**Executive summary**")
+            st.markdown(ai_result.get("executive_summary", ""))
+            if ai_result.get("what_changed"):
+                st.markdown("**What changed**")
+                st.markdown(ai_result.get("what_changed", ""))
+            if ai_result.get("what_to_watch"):
+                st.markdown("**What to watch**")
+                st.markdown(ai_result.get("what_to_watch", ""))
+            if ai_result.get("drivers_paragraph"):
+                st.markdown(ai_result.get("drivers_paragraph", ""))
+        st.divider()
+    elif enable_ai and not ai_result:
+        st.caption("AI interpretation unavailable. Charts and raw signals are still current.")
+    if macro_drivers_list:
+        st.markdown("#### Macro Drivers")
+        for a in macro_drivers_list:
+            with st.expander(f"{a.get('title', '')} — {a.get('source', '')} ({a.get('date', '')})"):
+                st.markdown(a.get("summary", ""))
+                if a.get("link"):
+                    st.markdown(f"[Read more]({a['link']})")
+        st.divider()
+
 # Build Tab 3 "last" chart once for PDF (rotation ladder or FRED regime)
 fig4 = None
 last_chart_header = "Rotation Ladder"
@@ -508,8 +586,10 @@ def _build_pdf_sections(
     thermo_series,
     liquidity_yoy_series,
     cpi_series,
+    ai_summary=None,
+    macro_drivers=None,
 ):
-    """Build full report sections: Executive Summary + Macro Radar, then all charts from Macro, Markets, and Regimes tabs."""
+    """Build full report sections: Executive Summary + Macro Radar + AI/Drivers, then all charts."""
     obs_start = config.lookback_to_observation_start(lookback)
     sections = []
 
@@ -539,6 +619,8 @@ def _build_pdf_sections(
         "data_sources": "FRED, Yahoo Finance",
         "snapshot": snapshot,
         "radar_fig": radar_fig,
+        "ai_summary": ai_summary,
+        "macro_drivers": macro_drivers or [],
     }
     sections.append(summary_section)
 
@@ -1126,6 +1208,8 @@ if pdf_available() and build_dashboard_pdf:
             thermo_series=thermo_series,
             liquidity_yoy_series=liquidity_yoy_series,
             cpi_series=cpi_series,
+            ai_summary=ai_result if enable_ai else None,
+            macro_drivers=macro_drivers_list if include_macro_drivers else [],
         )
         pdf_bytes = build_dashboard_pdf(
             _pdf_sections,

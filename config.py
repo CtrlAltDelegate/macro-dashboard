@@ -131,3 +131,15 @@ FRED_FISCAL = {
 FRED_DGS2 = "DGS2"           # 2-Year Treasury
 FRED_CORE_CPI = "CPILFESL"   # Core CPI (less food and energy)
 FRED_INITIAL_CLAIMS = "ICSA" # Initial Jobless Claims (weekly)
+
+# AI interpretation (optional): OpenAI for lightweight summary
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if not OPENAI_API_KEY:
+    try:
+        import streamlit as _st
+        if hasattr(_st, "secrets"):
+            _ak = getattr(_st.secrets, "get", lambda k: None)("OPENAI_API_KEY") or getattr(_st.secrets, "OPENAI_API_KEY", None)
+            if _ak:
+                OPENAI_API_KEY = str(_ak)
+    except Exception:
+        pass
