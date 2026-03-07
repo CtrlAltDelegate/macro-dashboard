@@ -45,6 +45,7 @@ from charts.build import (
     build_bands_chart,
     build_rotation_ladder_chart,
     build_btc_rainbow_chart,
+    build_macro_radar_chart,
 )
 from data import (
     fetch_valuation_data,
@@ -426,15 +427,179 @@ if chips:
 
 # Build Tab 3 "last" chart once for PDF (rotation ladder or FRED regime)
 fig4 = None
-last_chart_header = "8. Rotation Ladder"
+last_chart_header = "Rotation Ladder"
 last_chart_desc = "Z-score normalized relative strength ratios (risk-on → defensive). Higher line = that ratio outperforming."
 if use_fred_only_last_chart or ladder_df.empty:
     regime_curves = prepare_regime_curves(val_df, risk_df)
     fig4 = build_curves_chart(regime_curves, title="Macro Regime (FRED) — 100 = start")
-    last_chart_header = "8. Macro Regime (FRED)"
+    last_chart_header = "Macro Regime (FRED)"
     last_chart_desc = "FRED-only: S&P 500, Liquidity (WALCL), NFCI, HY spread — rebased to 100 at start."
 else:
     fig4 = build_rotation_ladder_chart(ladder_df)
+
+
+def _build_pdf_sections(
+    lookback,
+    show_event_markers,
+    show_10y_3m_lines,
+    show_market_overlay,
+    oil_log_scale,
+    oil_show_yoy,
+    oil_show_cpi,
+    btc_log_scale,
+    btc_show_liquidity,
+    btc_show_real_yield,
+    btc_rainbow_k,
+    spx_log_scale,
+    use_fred_only_last_chart,
+    val_df,
+    risk_df,
+    yield_df,
+    liquidity_df,
+    rot_df,
+    oil_df,
+    btc_series,
+    real_yield_series,
+    ladder_df,
+    overlay_val,
+    overlay_risk,
+    thermo_series,
+    liquidity_yoy_series,
+    cpi_series,
+):
+    """Build full report sections: Executive Summary + Macro Radar, then all charts from Macro, Markets, and Regimes tabs."""
+    obs_start = config.lookback_to_observation_start(lookback)
+    sections = []
+
+    # Snapshot for Page 1
+    snapshot = {}
+    if macro_score and zone_label:
+        snapshot["macro_score"] = macro_score
+        snapshot["zone_label"] = zone_label
+    if liquidity_status:
+        snapshot["liquidity_status"] = liquidity_status
+    if yield_status and last_spread_val is not None:
+        snapshot["yield_status"] = yield_status
+        snapshot["spread_val"] = f"{last_spread_val:.2f}%"
+    if credit_status:
+        snapshot["credit_status"] = credit_status
+    if fci_status:
+        snapshot["fci_status"] = fci_status
+
+    # Radar figure (recomputed for PDF)
+    radar_fig = build_macro_radar_chart(risk_df, liquidity_df, yield_df, thermo_series)
+
+    summary_section = {
+        "type": "summary",
+        "title": "Executive Summary",
+        "report_date": date.today().isoformat(),
+        "lookback_label": lookback,
+        "data_sources": "FRED, Yahoo Finance",
+        "snapshot": snapshot,
+        "radar_fig": radar_fig,
+    }
+    sections.append(summary_section)
+
+    # Macro (Core) tab charts — same figures already built above
+    macro_captions = [
+        "Global liquidity (Fed balance sheet YoY). Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.",
+        "Stock market pressure combines rates, inflation, unemployment, and liquidity. Higher values mean more pressure on valuations; lower values tend to support stocks.",
+        "Economic risk index combines multiple macro indicators. The blue line shows current risk level; the ROC line shows how quickly conditions are changing.",
+        "Yield curve (10Y – 3M). An inverted curve has historically signaled increasing recession risk.",
+        "Chicago Fed NFCI. Higher values indicate tighter financial conditions; lower values indicate easier conditions. Zero is the baseline.",
+        "ICE BofA US High Yield OAS. Rising spreads mean credit stress is increasing. Reference: 3% calm, 5% stress rising, 7% high stress.",
+        "Market risk level (0–100) from macro signals. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
+    ]
+    macro_tuples = [
+        ("Global Liquidity", macro_captions[0], fig_liquidity),
+        ("Stock Market Pressure", macro_captions[1], fig1),
+        ("Economic Risk Index", macro_captions[2], fig2),
+        ("Yield Curve (10Y – 3M) + Momentum", macro_captions[3], fig_yield),
+        ("Financial Conditions Index", macro_captions[4], fig_fci),
+        ("Credit Spreads (High Yield OAS)", macro_captions[5], fig_credit),
+        ("Market Risk Level (0–100)", macro_captions[6], fig3),
+    ]
+    for title, caption, fig in macro_tuples:
+        if fig is not None:
+            sections.append({"type": "chart", "title": f"Macro — {title}", "caption": caption, "fig": fig})
+
+    # Markets tab charts — build here for PDF (recompute so PDF does not depend on active tab)
+    fig_oil = build_oil_chart(
+        oil_df,
+        log_scale=oil_log_scale,
+        show_yoy=oil_show_yoy,
+        cpi_yoy_series=cpi_series,
+        show_event_markers=show_event_markers,
+    )
+    fig_btc = build_bitcoin_chart(
+        btc_series,
+        log_scale=btc_log_scale,
+        liquidity_yoy_series=liquidity_yoy_series if btc_show_liquidity else None,
+        real_yield_series=real_yield_series if btc_show_real_yield else None,
+        show_event_markers=show_event_markers,
+    )
+    fig_rainbow = build_btc_rainbow_chart(btc_series, display_start=obs_start, log_scale=btc_log_scale)
+    if fig_oil is not None:
+        sections.append({
+            "type": "chart",
+            "title": "Markets — Oil (WTI)",
+            "caption": "WTI spot price (FRED DCOILWTICO). Reflects commodity and inflation expectations.",
+            "fig": fig_oil,
+        })
+    if fig_btc is not None:
+        sections.append({
+            "type": "chart",
+            "title": "Markets — Bitcoin (BTC/USD)",
+            "caption": "Bitcoin price from FRED or Yahoo Finance. Optional overlays: Liquidity YoY, 10Y TIPS real yield.",
+            "fig": fig_btc,
+        })
+    if fig_rainbow is not None:
+        sections.append({
+            "type": "chart",
+            "title": "Markets — Bitcoin Rainbow (Log Regression Bands)",
+            "caption": "Log regression bands (full history). Balanced = midline; Terminal = lower band proxy.",
+            "fig": fig_rainbow,
+        })
+
+    # Regimes & Bands tab charts
+    sp500_series = val_df["SP500"].dropna() if not val_df.empty and "SP500" in val_df.columns else pd.Series(dtype=float)
+    oil_price_series = oil_df["DCOILWTICO"].dropna() if not oil_df.empty and "DCOILWTICO" in oil_df.columns else pd.Series(dtype=float)
+    if not sp500_series.empty and not thermo_series.empty:
+        fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers, log_scale=spx_log_scale)
+        if fig_bands_spx is not None:
+            sections.append({
+                "type": "chart",
+                "title": "Regimes — S&P 500 with risk bands",
+                "caption": "Background color shows macro risk zone over time. Price (white line) on top.",
+                "fig": fig_bands_spx,
+            })
+    if not btc_series.empty and not thermo_series.empty:
+        fig_bands_btc = build_bands_chart(btc_series, thermo_series, "Bitcoin — Macro Risk Bands", show_event_markers=show_event_markers)
+        if fig_bands_btc is not None:
+            sections.append({
+                "type": "chart",
+                "title": "Regimes — Bitcoin with risk bands",
+                "caption": "BTC price with same macro risk zone shading.",
+                "fig": fig_bands_btc,
+            })
+    if not oil_price_series.empty and not thermo_series.empty:
+        fig_bands_oil = build_bands_chart(oil_price_series, thermo_series, "WTI Oil — Macro Risk Bands", show_event_markers=show_event_markers)
+        if fig_bands_oil is not None:
+            sections.append({
+                "type": "chart",
+                "title": "Regimes — Oil (WTI) with risk bands",
+                "caption": "Oil price with macro risk zone shading.",
+                "fig": fig_bands_oil,
+            })
+    if fig4 is not None:
+        sections.append({
+            "type": "chart",
+            "title": f"Regimes — {last_chart_header}",
+            "caption": last_chart_desc,
+            "fig": fig4,
+        })
+
+    return sections
 
 # Initialize PNG bytes for PDF (set when each chart is built)
 png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
@@ -745,41 +910,14 @@ with tab_regimes:
     else:
         st.info("Chart data could not be loaded. Try \"Use FRED-only for final chart\" if Yahoo fails.")
 
-# ----- Generate PDF -----
+# ----- Generate PDF (all 3 tabs + Executive Summary + Macro Radar) -----
 if pdf_available() and build_dashboard_pdf:
-    _section_descs = [
-        "This chart tracks whether liquidity is expanding or contracting. Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.",
-        "This chart measures how much pressure the overall economy is placing on stock prices. It combines major forces like interest rates, inflation, unemployment, and liquidity. Higher values mean more pressure on valuations; lower values tend to support stocks.",
-        "This chart tracks the overall level of stress in the economy by combining multiple macro indicators into one score. The blue line shows current risk level; the ROC line shows how quickly conditions are changing.",
-        "This chart shows the difference between long-term and short-term U.S. Treasury interest rates. An inverted yield curve has historically signaled increasing recession risk.",
-        "Chicago Fed National Financial Conditions Index (NFCI). Higher values indicate tighter conditions; lower values indicate easier conditions. Zero is the baseline.",
-        "ICE BofA US High Yield Option-Adjusted Spread. Rising spreads mean credit is getting more expensive and stress is increasing. Reference lines: 3%% (calm), 5%% (stress rising), 7%% (high stress).",
-        "This chart converts complex macro signals into a simple risk score from 0 to 100. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
-        last_chart_desc,
-    ]
-    # Pass figures so PDF can export at build time (embeds charts when Kaleido works)
-    _pdf_sections = [
-        ("1. Global Liquidity", _section_descs[0], fig_liquidity),
-        ("2. Stock Market Pressure", _section_descs[1], fig1),
-        ("3. Economic Risk Index", _section_descs[2], fig2),
-        ("4. Yield Curve (10Y – 3M) + Momentum", _section_descs[3], fig_yield),
-        ("5. Financial Conditions Index", _section_descs[4], fig_fci),
-        ("6. Credit Spreads (High Yield OAS)", _section_descs[5], fig_credit),
-        ("7. Market Risk Level (0–100)", _section_descs[6], fig3),
-        (last_chart_header, _section_descs[7], fig4),
-    ]
-    _readout = ""
-    if macro_score and zone_label:
-        _readout += f"Macro Risk: {macro_score} ({zone_label}). "
-    if liquidity_status:
-        _readout += f"Liquidity: {liquidity_status}. "
-    if yield_status:
-        _readout += f"Yield curve: {yield_status}. "
-    if fci_status:
-        _readout += f"Financial conditions: {fci_status}. "
-    if credit_status:
-        _readout += f"Credit stress: {credit_status}."
-    # Diagnose why chart export might fail (so user sees the real error)
+    def _pdf_export_fn(fig):
+        if fig is None:
+            return None
+        png, _ = _try_export_png(_fig_for_pdf(fig))
+        return png
+
     _pdf_export_error = None
     for _fig in (fig_liquidity, fig1, fig2, fig_yield, fig_fci, fig_credit, fig3, fig4):
         if _fig is not None:
@@ -787,17 +925,48 @@ if pdf_available() and build_dashboard_pdf:
             if _err is not None:
                 _pdf_export_error = _err
             break
+
     try:
+        _pdf_sections = _build_pdf_sections(
+            lookback=lookback,
+            show_event_markers=show_event_markers,
+            show_10y_3m_lines=show_10y_3m_lines,
+            show_market_overlay=show_market_overlay,
+            oil_log_scale=oil_log_scale,
+            oil_show_yoy=oil_show_yoy,
+            oil_show_cpi=oil_show_cpi,
+            btc_log_scale=btc_log_scale,
+            btc_show_liquidity=btc_show_liquidity,
+            btc_show_real_yield=btc_show_real_yield,
+            btc_rainbow_k=btc_rainbow_k,
+            spx_log_scale=spx_log_scale,
+            use_fred_only_last_chart=use_fred_only_last_chart,
+            val_df=val_df,
+            risk_df=risk_df,
+            yield_df=yield_df,
+            liquidity_df=liquidity_df,
+            rot_df=rot_df,
+            oil_df=oil_df,
+            btc_series=btc_series,
+            real_yield_series=real_yield_series,
+            ladder_df=ladder_df,
+            overlay_val=overlay_val,
+            overlay_risk=overlay_risk,
+            thermo_series=thermo_series,
+            liquidity_yoy_series=liquidity_yoy_series,
+            cpi_series=cpi_series,
+        )
         pdf_bytes = build_dashboard_pdf(
             _pdf_sections,
             report_date=date.today().isoformat(),
-            readout_text=_readout.strip() or None,
-            export_fn=lambda fig: (_try_export_png(_fig_for_pdf(fig))[0] if fig is not None else None),
+            lookback_label=lookback,
+            data_sources="FRED, Yahoo Finance",
+            export_fn=_pdf_export_fn,
         )
         st.download_button(
             "Download PDF",
             data=pdf_bytes,
-            file_name="macro_dashboard.pdf",
+            file_name="macro_intelligence_brief.pdf",
             mime="application/pdf",
             key="dl_pdf",
         )

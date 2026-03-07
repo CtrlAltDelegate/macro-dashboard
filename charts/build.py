@@ -36,6 +36,197 @@ REGIME_BANDS_6 = [
 OVERLAY_COLOR = "rgba(140, 140, 140, 0.65)"
 OVERLAY_LINE = dict(color=OVERLAY_COLOR, width=1.2, dash="dash")
 
+# Macro Radar: pillar names and scoring (0–100, higher = worse risk)
+RADAR_PILLARS = [
+    "Liquidity",
+    "Yield Curve",
+    "Credit",
+    "Financial Conditions",
+    "Inflation",
+    "Labor",
+    "Market Risk",
+]
+
+
+def _score_liquidity_yoy(yoy: float | None) -> float:
+    """Map WALCL YoY % to risk 0–100. Positive YoY = low risk, negative = high."""
+    if yoy is None:
+        return 50.0
+    if yoy >= 10:
+        return 10.0
+    if yoy >= 0:
+        return 15.0 + (10 - yoy) * 2.0  # 0->35, 10->15
+    if yoy >= -5:
+        return 35.0 + (-yoy) * 6.0  # 0->35, -5->65
+    return min(95.0, 65.0 + (-5 - yoy) * 4.0)
+
+
+def _score_yield_curve(spread: float | None) -> float:
+    """Map 10Y–3M spread to risk 0–100. Inverted = high risk."""
+    if spread is None:
+        return 50.0
+    if spread >= 1.5:
+        return 20.0
+    if spread >= 0:
+        return 20.0 + (1.5 - spread) * 20.0  # 1.5->20, 0->50
+    return min(100.0, 50.0 + (-spread) * 25.0)
+
+
+def _score_credit_hy(oas: float | None) -> float:
+    """Map HY OAS % to risk 0–100."""
+    if oas is None:
+        return 50.0
+    if oas <= 3:
+        return 15.0 + oas * 3.33
+    if oas <= 7:
+        return 25.0 + (oas - 3) * 13.75  # 3->25, 7->80
+    return min(100.0, 80.0 + (oas - 7) * 7.5)
+
+
+def _score_nfci(nfci: float | None) -> float:
+    """Map NFCI to risk 0–100. Tighter (positive) = higher risk."""
+    if nfci is None:
+        return 50.0
+    # NFCI typically -1 to +1; 0 = neutral
+    return float(np.clip(50.0 + nfci * 50.0, 0, 100))
+
+
+def _score_inflation_yoy(cpi_yoy: float | None) -> float:
+    """Map CPI YoY % to risk 0–100."""
+    if cpi_yoy is None:
+        return 50.0
+    if cpi_yoy <= 2:
+        return 20.0 + cpi_yoy * 5.0
+    if cpi_yoy <= 6:
+        return 30.0 + (cpi_yoy - 2) * 10.0  # 2->30, 6->70
+    return min(100.0, 70.0 + (cpi_yoy - 6) * 7.5)
+
+
+def _score_labor(unemployment: float | None) -> float:
+    """Map unemployment rate to risk 0–100."""
+    if unemployment is None:
+        return 50.0
+    if unemployment <= 4:
+        return 20.0 + unemployment * 5.0
+    if unemployment <= 7:
+        return 40.0 + (unemployment - 4) * 15.0
+    return min(100.0, 85.0 + (unemployment - 7) * 5.0)
+
+
+def compute_radar_pillar_scores(
+    risk_df: pd.DataFrame,
+    liquidity_df: pd.DataFrame,
+    yield_df: pd.DataFrame,
+    thermo_series: pd.Series,
+) -> dict[str, float]:
+    """Compute 0–100 risk score per pillar (higher = worse). Returns dict of pillar name -> score."""
+    scores: dict[str, float] = {p: 50.0 for p in RADAR_PILLARS}
+
+    # Liquidity: WALCL YoY
+    if not liquidity_df.empty and "WALCL" in liquidity_df.columns:
+        walcl = liquidity_df["WALCL"].dropna()
+        if len(walcl) >= 53:
+            yoy = ((walcl / walcl.shift(52)) - 1) * 100
+            yoy = yoy.dropna()
+            if not yoy.empty:
+                scores["Liquidity"] = _score_liquidity_yoy(float(yoy.iloc[-1]))
+
+    # Yield curve: 10Y – 3M
+    if not yield_df.empty and "DGS10" in yield_df.columns and "DGS3MO" in yield_df.columns:
+        spread = yield_df["DGS10"].sub(yield_df["DGS3MO"]).dropna()
+        if not spread.empty:
+            scores["Yield Curve"] = _score_yield_curve(float(spread.iloc[-1]))
+
+    # Credit: HY OAS
+    if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns:
+        hy = risk_df["CREDIT_STRESS"].dropna()
+        if not hy.empty:
+            scores["Credit"] = _score_credit_hy(float(hy.iloc[-1]))
+
+    # Financial Conditions: NFCI
+    if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
+        nfci = risk_df["CREDIT_TIGHTENING"].dropna()
+        if not nfci.empty:
+            scores["Financial Conditions"] = _score_nfci(float(nfci.iloc[-1]))
+
+    # Inflation: CPI YoY
+    if not risk_df.empty and "INFLATION" in risk_df.columns:
+        cpi = risk_df["INFLATION"].dropna()
+        if len(cpi) >= 13:
+            cpi_yoy = ((cpi / cpi.shift(12)) - 1) * 100
+            cpi_yoy = cpi_yoy.dropna()
+            if not cpi_yoy.empty:
+                scores["Inflation"] = _score_inflation_yoy(float(cpi_yoy.iloc[-1]))
+
+    # Labor: Unemployment
+    if not risk_df.empty and "UNEMPLOYMENT" in risk_df.columns:
+        u = risk_df["UNEMPLOYMENT"].dropna()
+        if not u.empty:
+            scores["Labor"] = _score_labor(float(u.iloc[-1]))
+
+    # Market Risk: thermostat (already 0–100)
+    if not thermo_series.empty:
+        scores["Market Risk"] = float(thermo_series.iloc[-1])
+
+    return scores
+
+
+def build_macro_radar_chart(
+    risk_df: pd.DataFrame,
+    liquidity_df: pd.DataFrame,
+    yield_df: pd.DataFrame,
+    thermo_series: pd.Series,
+) -> go.Figure | None:
+    """
+    Macro Radar (spider chart): 7 pillars, 0–100 risk per axis (higher = worse).
+    Dark theme, fill='toself', hover shows current value.
+    """
+    scores_dict = compute_radar_pillar_scores(risk_df, liquidity_df, yield_df, thermo_series)
+    values = [scores_dict[p] for p in RADAR_PILLARS]
+    categories = RADAR_PILLARS
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values + [values[0]],
+            theta=categories + [categories[0]],
+            fill="toself",
+            fillcolor="rgba(88, 166, 255, 0.35)",
+            line=dict(color="#58a6ff", width=2),
+            name="Risk score",
+            hovertemplate="%{theta}: %{r:.0f}/100<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        polar=dict(
+            bgcolor="#0d1117",
+            radialaxis=dict(
+                range=[0, 100],
+                tickvals=[20, 40, 60, 80],
+                gridcolor="#30363d",
+                linecolor="#8b949e",
+                tickfont=dict(color="#8b949e", size=10),
+            ),
+            angularaxis=dict(
+                gridcolor="#30363d",
+                linecolor="#8b949e",
+                tickfont=dict(color="#8b949e", size=11),
+            ),
+        ),
+        title=dict(
+            text="Macro Radar — Risk by pillar (0–100, higher = worse)",
+            font=dict(size=14, color="#e6edf3"),
+            x=0.5,
+            xanchor="center",
+        ),
+        paper_bgcolor="#0d1117",
+        showlegend=False,
+        margin=dict(l=80, r=80, t=48, b=48),
+        height=380,
+    )
+    return fig
+
+
 # Optional event markers (vertical lines)
 EVENT_MARKERS = [
     ("2020-03-16", "COVID crash"),
