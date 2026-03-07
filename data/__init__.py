@@ -7,6 +7,8 @@ from .fred_data import (
     fetch_oil_data,
     fetch_bitcoin_fred,
     fetch_real_yield_data,
+    fetch_fiscal_data,
+    fetch_model_input_series,
 )
 from .market_data import fetch_rotation_data, fetch_bitcoin_yfinance, fetch_bitcoin_data
 
@@ -19,6 +21,8 @@ __all__ = [
     "fetch_oil_data",
     "fetch_bitcoin_fred",
     "fetch_real_yield_data",
+    "fetch_fiscal_data",
+    "fetch_model_input_series",
     "fetch_rotation_data",
     "fetch_bitcoin_yfinance",
     "fetch_bitcoin_data",

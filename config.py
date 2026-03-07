@@ -115,3 +115,19 @@ ROTATION_LADDER_PAIRS = [
     ("SPY", "GLD"),          # SPX/Gold
     ("GLD", "TLT"),          # Gold/Bonds
 ]
+
+# Fiscal tab — deficit, debt, interest burden
+# FYFSGDA188S = Federal Surplus or Deficit [-] as % of GDP (annual; deficit negative → use -series for Deficit % GDP)
+# FYGFDPUN = Federal Debt as Percent of GDP (annual)
+# B091RC1Q027SBEA = Federal net interest (quarterly, billions); GDP = quarterly GDP for interest % GDP
+FRED_FISCAL = {
+    "DEFICIT_PCT_GDP": "FYFSGDA188S",   # Surplus/Deficit as % GDP (deficit = negative)
+    "DEBT_PCT_GDP": "FYGFDPUN",         # Debt as % of GDP
+    "NET_INTEREST": "B091RC1Q027SBEA",  # Net interest outlays (quarterly, billions)
+    "GDP": "GDP",                       # Quarterly GDP (billions, SAAR) for interest burden
+}
+
+# Model inputs (extra series for Macro tab: 2Y yield, Core CPI, Initial Claims)
+FRED_DGS2 = "DGS2"           # 2-Year Treasury
+FRED_CORE_CPI = "CPILFESL"   # Core CPI (less food and energy)
+FRED_INITIAL_CLAIMS = "ICSA" # Initial Jobless Claims (weekly)

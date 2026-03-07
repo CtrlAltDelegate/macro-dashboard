@@ -38,7 +38,6 @@ from charts.build import (
     build_fci_chart,
     build_credit_spreads_chart,
     build_thermostat_chart,
-    build_rotation_chart,
     build_curves_chart,
     build_oil_chart,
     build_bitcoin_chart,
@@ -46,6 +45,9 @@ from charts.build import (
     build_rotation_ladder_chart,
     build_btc_rainbow_chart,
     build_macro_radar_chart,
+    build_deficit_pct_gdp_chart,
+    build_debt_to_gdp_chart,
+    build_interest_burden_chart,
 )
 from data import (
     fetch_valuation_data,
@@ -56,6 +58,8 @@ from data import (
     fetch_oil_data,
     fetch_bitcoin_data,
     fetch_real_yield_data,
+    fetch_fiscal_data,
+    fetch_model_input_series,
 )
 from data.market_data import fetch_rotation_ladder_data
 from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_regime_curves
@@ -178,7 +182,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("# Macro Dashboard")
-st.markdown('<p class="subtitle">Macro (Core) · Markets (Oil, BTC) · Regimes & Bands</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Macro (Core) · Markets (Oil, BTC) · Regimes & Bands · Fiscal</p>', unsafe_allow_html=True)
+
+
+def _roc_1y(series: pd.Series, periods: int) -> float | None:
+    """1-year rate of change in percent. periods: 12=monthly, 52=weekly, 252=daily."""
+    if series is None or series.empty or len(series) < periods + 1:
+        return None
+    old = series.iloc[-periods - 1]
+    new = series.iloc[-1]
+    if old == 0 or not pd.notna(old) or not pd.notna(new):
+        return None
+    return ((new - old) / abs(old)) * 100
+
+
+def _model_input_cards(
+    items: list[tuple[str, str, float | None, bool]],
+) -> None:
+    """Render a row of model input cards. Each item: (label, value_str, roc_1y or None, higher_is_worse)."""
+    if not items:
+        return
+    n = len(items)
+    cols = st.columns(min(n, 6) if n > 4 else n)
+    for i, (label, value_str, roc, higher_is_worse) in enumerate(items):
+        with cols[i % len(cols)]:
+            delta_str = f"1Y ROC {roc:+.1f}%" if roc is not None else None
+            delta_color = "inverse" if higher_is_worse else "normal"  # inverse: positive ROC = red
+            st.metric(label, value_str, delta=delta_str, delta_color=delta_color if delta_str else "off")
 
 if not config.FRED_API_KEY:
     # Brief diagnostic (no secret values): helps debug Streamlit Cloud Secrets
@@ -260,15 +290,27 @@ def load_all(lookback: str):
         ladder_df = fetch_rotation_ladder_data(period=rot_period)
     except Exception:
         ladder_df = pd.DataFrame()
-    return val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df
+    fiscal_df = pd.DataFrame()
+    model_input_series = {}
+    if config.FRED_API_KEY:
+        try:
+            fiscal_df = fetch_fiscal_data(observation_start=obs_start)
+        except Exception:
+            pass
+        try:
+            model_input_series = fetch_model_input_series(observation_start=obs_start)
+        except Exception:
+            pass
+    return val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series
 
 try:
-    val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df = load_all(lookback)
+    val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series = load_all(lookback)
 except Exception as e:
     st.error(f"Data load failed: {e}")
-    val_df = risk_df = yield_df = liquidity_df = rot_df = oil_df = pd.DataFrame()
+    val_df = risk_df = yield_df = liquidity_df = rot_df = oil_df = fiscal_df = pd.DataFrame()
     btc_series = real_yield_series = pd.Series(dtype=float)
     ladder_df = pd.DataFrame()
+    model_input_series = {}
 
 # Optional S&P 500 overlay (SPX/SP500 from valuation data), aligned to each chart's lookback
 overlay_val = None
@@ -604,10 +646,48 @@ def _build_pdf_sections(
 # Initialize PNG bytes for PDF (set when each chart is built)
 png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
 
-# ----- Tabs: Macro (Core) | Markets | Regimes & Bands -----
-tab_macro, tab_markets, tab_regimes = st.tabs(["Macro (Core)", "Markets", "Regimes & Bands"])
+# ----- Tabs: Macro (Core) | Markets | Regimes & Bands | Fiscal -----
+tab_macro, tab_markets, tab_regimes, tab_fiscal = st.tabs(["Macro (Core)", "Markets", "Regimes & Bands", "Fiscal"])
 
 with tab_macro:
+    st.markdown("#### Model Inputs")
+    # Build macro model input variables: current value + 1Y ROC
+    _fed = val_df["FEDFUNDS"].dropna() if not val_df.empty and "FEDFUNDS" in val_df.columns else pd.Series(dtype=float)
+    _dgs2 = model_input_series.get("DGS2") or pd.Series(dtype=float)
+    _dgs10 = yield_df["DGS10"].dropna() if not yield_df.empty and "DGS10" in yield_df.columns else pd.Series(dtype=float)
+    _cpi = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else pd.Series(dtype=float)
+    _cpi_yoy = ((_cpi / _cpi.shift(12)) - 1) * 100 if len(_cpi) >= 13 else pd.Series(dtype=float)
+    _core_cpi = model_input_series.get("CPILFESL") or pd.Series(dtype=float)
+    _core_cpi_yoy = ((_core_cpi / _core_cpi.shift(12)) - 1) * 100 if len(_core_cpi) >= 13 else pd.Series(dtype=float)
+    _unemp = risk_df["UNEMPLOYMENT"].dropna() if not risk_df.empty and "UNEMPLOYMENT" in risk_df.columns else pd.Series(dtype=float)
+    _claims = model_input_series.get("ICSA") or pd.Series(dtype=float)
+    _walcl = liquidity_df["WALCL"].dropna() if not liquidity_df.empty and "WALCL" in liquidity_df.columns else pd.Series(dtype=float)
+    _hy = risk_df["CREDIT_STRESS"].dropna() if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns else pd.Series(dtype=float)
+    _nfci = risk_df["CREDIT_TIGHTENING"].dropna() if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns else pd.Series(dtype=float)
+    _macro_inputs = []
+    if not _fed.empty:
+        _macro_inputs.append(("Fed Funds Rate", f"{_fed.iloc[-1]:.2f}%", _roc_1y(_fed, 12), True))
+    if not _dgs2.empty:
+        _macro_inputs.append(("2Y Treasury", f"{_dgs2.iloc[-1]:.2f}%", _roc_1y(_dgs2, 252), True))
+    if not _dgs10.empty:
+        _macro_inputs.append(("10Y Treasury", f"{_dgs10.iloc[-1]:.2f}%", _roc_1y(_dgs10, 252), True))
+    if not _cpi_yoy.empty:
+        _macro_inputs.append(("CPI YoY", f"{_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_cpi_yoy, 12), True))
+    if not _core_cpi_yoy.empty:
+        _macro_inputs.append(("Core CPI YoY", f"{_core_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_core_cpi_yoy, 12), True))
+    if not _unemp.empty:
+        _macro_inputs.append(("Unemployment", f"{_unemp.iloc[-1]:.1f}%", _roc_1y(_unemp, 12), True))
+    if not _claims.empty:
+        _macro_inputs.append(("Initial Claims", f"{_claims.iloc[-1]:,.0f}", _roc_1y(_claims, 52), True))
+    if not _walcl.empty:
+        _macro_inputs.append(("Fed Balance Sheet", f"{_walcl.iloc[-1]/1e9:.1f}B", _roc_1y(_walcl, 52), False))
+    if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
+        _macro_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series, 52), False))
+    if not _hy.empty:
+        _macro_inputs.append(("HY OAS", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy, 252), True))
+    if not _nfci.empty:
+        _macro_inputs.append(("NFCI", f"{_nfci.iloc[-1]:.3f}", _roc_1y(_nfci, 252), True))
+    _model_input_cards(_macro_inputs)
     st.markdown("#### Today's Snapshot")
     with st.container():
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -749,6 +829,20 @@ with tab_macro:
         st.info("Requires macro risk data.")
 
 with tab_markets:
+    st.markdown("#### Model Inputs")
+    _sp500 = val_df["SP500"].dropna() if not val_df.empty and "SP500" in val_df.columns else pd.Series(dtype=float)
+    _wti = oil_df["DCOILWTICO"].dropna() if not oil_df.empty and "DCOILWTICO" in oil_df.columns else pd.Series(dtype=float)
+    _market_inputs = []
+    if btc_snapshot and btc_snapshot.get("price") is not None:
+        _market_inputs.append(("Bitcoin Price", f"${btc_snapshot['price']:,.0f}", btc_snapshot.get("roc52w"), False))
+    for ma in ["wma50", "wma100", "wma200", "wma300"]:
+        if btc_snapshot and btc_snapshot.get(ma) is not None:
+            _market_inputs.append((f"BTC {ma.upper()}", f"${btc_snapshot[ma]:,.0f}", None, False))
+    if not _sp500.empty:
+        _market_inputs.append(("S&P 500", f"{_sp500.iloc[-1]:,.0f}", _roc_1y(_sp500, 252), False))
+    if not _wti.empty:
+        _market_inputs.append(("WTI Oil", f"${_wti.iloc[-1]:.2f}", _roc_1y(_wti, 252), False))
+    _model_input_cards(_market_inputs)
     st.markdown("#### Today's Snapshot")
     # BTC strip
     if btc_snapshot and btc_snapshot.get("price") is not None:
@@ -838,6 +932,24 @@ with tab_markets:
         st.info("Not enough BTC history for Rainbow (need 30+ points).")
 
 with tab_regimes:
+    st.markdown("#### Model Inputs")
+    _spread_series = yield_df["DGS10"].sub(yield_df["DGS3MO"]).dropna() if not yield_df.empty and "DGS10" in yield_df.columns and "DGS3MO" in yield_df.columns else pd.Series(dtype=float)
+    _regime_inputs = []
+    if not thermo_series.empty:
+        _regime_inputs.append(("Market Risk Score", f"{thermo_series.iloc[-1]:.0f}/100", _roc_1y(thermo_series, 252), True))
+    if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
+        _regime_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series, 52), False))
+    if not _spread_series.empty:
+        _regime_inputs.append(("Yield Curve (10Y–3M)", f"{_spread_series.iloc[-1]:.2f}%", _roc_1y(_spread_series, 252), False))  # higher spread = steeper = better
+    if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns:
+        _hy = risk_df["CREDIT_STRESS"].dropna()
+        if not _hy.empty:
+            _regime_inputs.append(("Credit Spread", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy, 252), True))
+    if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
+        _n = risk_df["CREDIT_TIGHTENING"].dropna()
+        if not _n.empty:
+            _regime_inputs.append(("NFCI", f"{_n.iloc[-1]:.3f}", _roc_1y(_n, 252), True))
+    _model_input_cards(_regime_inputs)
     st.markdown("#### Today's Snapshot")
     r1, r2, r3, r4, r5 = st.columns(5)
     with r1:
@@ -909,6 +1021,65 @@ with tab_regimes:
             st.download_button("Export PNG", data=png4, file_name="08_rotation_ladder.png", mime="image/png", key="dl_rot")
     else:
         st.info("Chart data could not be loaded. Try \"Use FRED-only for final chart\" if Yahoo fails.")
+
+with tab_fiscal:
+    st.markdown("#### Model Inputs")
+    _def_pct = fiscal_df["DEFICIT_PCT_GDP"].dropna() if not fiscal_df.empty and "DEFICIT_PCT_GDP" in fiscal_df.columns else pd.Series(dtype=float)
+    _debt_pct = fiscal_df["DEBT_PCT_GDP"].dropna() if not fiscal_df.empty and "DEBT_PCT_GDP" in fiscal_df.columns else pd.Series(dtype=float)
+    _net_int = fiscal_df["NET_INTEREST"].dropna() if not fiscal_df.empty and "NET_INTEREST" in fiscal_df.columns else pd.Series(dtype=float)
+    _int_pct = fiscal_df["INTEREST_PCT_GDP"].dropna() if not fiscal_df.empty and "INTEREST_PCT_GDP" in fiscal_df.columns else pd.Series(dtype=float)
+    _fiscal_inputs = []
+    if not _def_pct.empty:
+        _fiscal_inputs.append(("Annual Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%", _roc_1y(_def_pct, 1), True))  # annual
+    if not _debt_pct.empty:
+        _fiscal_inputs.append(("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%", _roc_1y(_debt_pct, 1), True))  # annual
+    if not _net_int.empty:
+        _fiscal_inputs.append(("Net Interest ($B)", f"{_net_int.iloc[-1]:.1f}", _roc_1y(_net_int, 4), True))  # quarterly
+    if not _int_pct.empty:
+        _fiscal_inputs.append(("Interest % GDP", f"{_int_pct.iloc[-1]:.2f}%", _roc_1y(_int_pct, 4), True))  # quarterly
+    _model_input_cards(_fiscal_inputs)
+    st.markdown("#### Fiscal Snapshot")
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        st.metric("Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%" if not _def_pct.empty else "—", "")
+    with f2:
+        st.metric("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%" if not _debt_pct.empty else "—", "")
+    with f3:
+        st.metric("Interest Burden", f"{_int_pct.iloc[-1]:.2f}%" if not _int_pct.empty else "—", "% of GDP")
+    st.divider()
+
+    st.header("1. Annual Deficit (% of GDP)")
+    st.markdown(
+        '<p class="section-desc">This chart shows how much the federal government is spending beyond its income relative to the size of the economy. Higher values mean fiscal imbalances are becoming larger.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_deficit = build_deficit_pct_gdp_chart(fiscal_df, show_event_markers=show_event_markers)
+    if fig_deficit is not None:
+        st.plotly_chart(fig_deficit, width="stretch", key="fiscal_deficit")
+    else:
+        st.info("Not enough fiscal data. Check FRED series FYFSGDA188S (Surplus/Deficit as % GDP).")
+
+    st.header("2. Federal Debt-to-GDP")
+    st.markdown(
+        '<p class="section-desc">This chart shows the size of the national debt relative to the economy. Rising levels suggest the debt burden is becoming harder to manage over time.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_debt = build_debt_to_gdp_chart(fiscal_df, show_event_markers=show_event_markers)
+    if fig_debt is not None:
+        st.plotly_chart(fig_debt, width="stretch", key="fiscal_debt")
+    else:
+        st.info("Not enough fiscal data. Check FRED series FYGFDPUN (Debt % GDP).")
+
+    st.header("3. Net Interest Expense Burden")
+    st.markdown(
+        '<p class="section-desc">This chart shows how much of the government\'s financial capacity is being consumed by interest payments on the debt. Rising values can reduce flexibility and increase long-term fiscal risk. Shown as percent of GDP.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_interest = build_interest_burden_chart(fiscal_df, show_event_markers=show_event_markers)
+    if fig_interest is not None:
+        st.plotly_chart(fig_interest, width="stretch", key="fiscal_interest")
+    else:
+        st.info("Not enough fiscal data. Check FRED series B091RC1Q027SBEA (Net interest) and GDP.")
 
 # ----- Generate PDF (all 3 tabs + Executive Summary + Macro Radar) -----
 if pdf_available() and build_dashboard_pdf:

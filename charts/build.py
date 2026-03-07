@@ -502,6 +502,70 @@ def build_credit_spreads_chart(
     return fig
 
 
+def build_deficit_pct_gdp_chart(
+    fiscal_df: pd.DataFrame,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Annual Deficit (% of GDP). Higher = larger fiscal imbalance."""
+    if fiscal_df.empty or "DEFICIT_PCT_GDP" not in fiscal_df.columns:
+        return None
+    s = fiscal_df["DEFICIT_PCT_GDP"].dropna()
+    if s.empty or len(s) < 2:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        name="Deficit % GDP", line=dict(color="#f85149", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Deficit: %{y:.2f}% of GDP<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="rgba(139, 148, 158, 0.9)", line_width=1.2)
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "1. Annual Deficit (% of GDP)", height=380)
+    return fig
+
+
+def build_debt_to_gdp_chart(
+    fiscal_df: pd.DataFrame,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Federal Debt as % of GDP. Rising = higher debt burden."""
+    if fiscal_df.empty or "DEBT_PCT_GDP" not in fiscal_df.columns:
+        return None
+    s = fiscal_df["DEBT_PCT_GDP"].dropna()
+    if s.empty or len(s) < 2:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        name="Debt % GDP", line=dict(color="#58a6ff", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Debt-to-GDP: %{y:.1f}%<extra></extra>",
+    ))
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "2. Federal Debt-to-GDP", height=380)
+    return fig
+
+
+def build_interest_burden_chart(
+    fiscal_df: pd.DataFrame,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Net Interest as % of GDP (debt service burden). Rising = less fiscal flexibility."""
+    if fiscal_df.empty or "INTEREST_PCT_GDP" not in fiscal_df.columns:
+        return None
+    s = fiscal_df["INTEREST_PCT_GDP"].dropna()
+    if s.empty or len(s) < 2:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        name="Net interest % GDP", line=dict(color="#d29922", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Interest burden: %{y:.2f}% of GDP<extra></extra>",
+    ))
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "3. Net Interest Expense Burden", height=380)
+    return fig
+
+
 def build_thermostat_chart(
     risk_df: pd.DataFrame,
     overlay_series: pd.Series | None = None,

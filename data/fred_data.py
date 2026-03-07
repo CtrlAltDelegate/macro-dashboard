@@ -136,3 +136,56 @@ def fetch_real_yield_data(observation_start: str | None = None) -> pd.Series:
         return s
     except Exception:
         return pd.Series(dtype=float)
+
+
+def fetch_fiscal_data(observation_start: str | None = None) -> pd.DataFrame:
+    """Fetch fiscal series for Fiscal tab: Deficit % GDP, Debt % GDP, Net Interest, GDP.
+    Returns DataFrame with columns: DEFICIT_PCT_GDP (positive = deficit), DEBT_PCT_GDP,
+    NET_INTEREST, GDP, INTEREST_PCT_GDP (computed).
+    """
+    if not config.FRED_API_KEY:
+        return pd.DataFrame()
+    client = _get_fred_client()
+    out = {}
+    for name, sid in config.FRED_FISCAL.items():
+        try:
+            s = client.get_series(sid, observation_start=observation_start)
+            s = s.ffill().dropna()
+            out[name] = s
+        except Exception:
+            out[name] = pd.Series(dtype=float)
+    if not out or out.get("DEFICIT_PCT_GDP") is None or out["DEFICIT_PCT_GDP"].empty:
+        return pd.DataFrame()
+    df = pd.DataFrame(out)
+    df = df.ffill().dropna(how="all")
+    # Deficit as positive % of GDP (FRED series: surplus positive, deficit negative)
+    if "DEFICIT_PCT_GDP" in df.columns:
+        df["DEFICIT_PCT_GDP"] = -df["DEFICIT_PCT_GDP"]
+    # Interest as % of GDP (quarterly)
+    if "NET_INTEREST" in df.columns and "GDP" in df.columns:
+        ni = df["NET_INTEREST"].dropna()
+        gdp = df["GDP"].dropna()
+        common = ni.index.intersection(gdp.index)
+        if len(common) >= 2:
+            df["INTEREST_PCT_GDP"] = (df["NET_INTEREST"] / df["GDP"]) * 100
+    return df
+
+
+def fetch_model_input_series(observation_start: str | None = None) -> dict[str, pd.Series]:
+    """Fetch extra series for Model Inputs: 2Y yield, Core CPI, Initial Claims.
+    Returns dict with keys DGS2, CPILFESL, ICSA (each value a Series or empty)."""
+    if not config.FRED_API_KEY:
+        return {"DGS2": pd.Series(dtype=float), "CPILFESL": pd.Series(dtype=float), "ICSA": pd.Series(dtype=float)}
+    out = {}
+    for key, sid in [
+        ("DGS2", config.FRED_DGS2),
+        ("CPILFESL", config.FRED_CORE_CPI),
+        ("ICSA", config.FRED_INITIAL_CLAIMS),
+    ]:
+        try:
+            s = fetch_fred_series(sid, observation_start=observation_start)
+            s = s.ffill().dropna()
+            out[key] = s
+        except Exception:
+            out[key] = pd.Series(dtype=float)
+    return out
