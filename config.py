@@ -138,7 +138,11 @@ if not OPENAI_API_KEY:
     try:
         import streamlit as _st
         if hasattr(_st, "secrets"):
-            _ak = getattr(_st.secrets, "get", lambda k: None)("OPENAI_API_KEY") or getattr(_st.secrets, "OPENAI_API_KEY", None)
+            _ak = getattr(_st.secrets, "OPENAI_API_KEY", None)
+            if not _ak and "OPENAI_API_KEY" in _st.secrets:
+                _ak = _st.secrets["OPENAI_API_KEY"]
+            if not _ak and hasattr(_st.secrets, "openai"):
+                _ak = getattr(_st.secrets.openai, "OPENAI_API_KEY", None)
             if _ak:
                 OPENAI_API_KEY = str(_ak)
     except Exception:

@@ -140,11 +140,15 @@ def generate_ai_summary(
             return cached
 
     api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key and _CONFIG_AVAILABLE:
+    if not api_key:
         try:
             import streamlit as _st
             if hasattr(_st, "secrets"):
-                api_key = getattr(_st.secrets, "get", lambda k: None)("OPENAI_API_KEY") or getattr(_st.secrets, "OPENAI_API_KEY", "") or ""
+                api_key = getattr(_st.secrets, "OPENAI_API_KEY", "") or ""
+                if not api_key and "OPENAI_API_KEY" in _st.secrets:
+                    api_key = str(_st.secrets["OPENAI_API_KEY"] or "")
+                if not api_key and hasattr(_st.secrets, "openai"):
+                    api_key = str(getattr(_st.secrets.openai, "OPENAI_API_KEY", "") or "")
         except Exception:
             pass
     if not api_key:

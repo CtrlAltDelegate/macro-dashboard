@@ -22,7 +22,11 @@ try:
             val = st.secrets["FRED_API_KEY"]
         if val:
             os.environ.setdefault("FRED_API_KEY", str(val))
-        ak = getattr(st.secrets, "get", lambda k: None)("OPENAI_API_KEY") or getattr(st.secrets, "OPENAI_API_KEY", None)
+        ak = getattr(st.secrets, "OPENAI_API_KEY", None)
+        if not ak and "OPENAI_API_KEY" in st.secrets:
+            ak = st.secrets["OPENAI_API_KEY"]
+        if not ak and hasattr(st.secrets, "openai"):
+            ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
         if ak:
             os.environ.setdefault("OPENAI_API_KEY", str(ak))
 except Exception:
@@ -31,7 +35,7 @@ except Exception:
 import config
 
 # Server-side log: appears in Streamlit Cloud "Manage app" → Logs (not in browser console)
-print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}")
+print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}, OPENAI_API_KEY set: {bool(config.OPENAI_API_KEY)}")
 
 from charts.build import (
     build_valuation_chart,
