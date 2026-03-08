@@ -6,8 +6,8 @@ yfinance>=0.2.0
 plotly>=5.18.0
 streamlit>=1.28.0
 python-dotenv>=1.0.0
-# Use 0.2.1 to avoid Chrome dependency (1.x requires Chrome)
-kaleido==0.2.1
+# Kaleido >=1.0 required (0.x deprecated after Sept 2025). For PDF chart export.
+kaleido>=1.0.0
 reportlab>=4.0.0
 # AI interpretation (optional)
 openai>=1.0.0
