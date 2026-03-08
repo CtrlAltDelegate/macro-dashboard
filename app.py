@@ -541,7 +541,9 @@ if enable_ai or include_macro_drivers:
                 st.markdown(ai_result.get("asset_implications", ""))
         st.divider()
     elif enable_ai and not ai_result:
-        st.caption("AI interpretation unavailable. Charts and raw signals are still current.")
+        st.caption(
+            "AI interpretation unavailable. Add **OPENAI_API_KEY** in Settings → Secrets (Streamlit Cloud) or in `.env` / `.streamlit/secrets.toml` (local), then reload. Charts and raw signals are still current."
+        )
     if macro_drivers_list:
         st.markdown("#### Macro Drivers")
         for a in macro_drivers_list:
@@ -1236,9 +1238,9 @@ if pdf_available() and build_dashboard_pdf:
                 st.code(_pdf_export_error, language="text")
                 st.markdown(
                     "Charts need **Kaleido** to export Plotly figures to PNG. "
-                    "Install: `pip install kaleido --upgrade`. "
-                    "If Kaleido 1.x complains about Chrome, run in a terminal: "
-                    "`python -c \"import kaleido; kaleido.get_chrome_sync()\"`"
+                    "**On Streamlit Cloud:** Chrome usually isn't available, so PDF chart export may not work; the rest of the PDF (summary, AI text, drivers) still generates. "
+                    "**Locally:** run `pip install kaleido --upgrade`, then if Kaleido 1.x complains about Chrome: "
+                    "`python -c \"import kaleido; kaleido.get_chrome_sync()\"` or install Chrome from Google."
                 )
     except Exception as e:
         st.caption(f"PDF could not be generated: {e}")
