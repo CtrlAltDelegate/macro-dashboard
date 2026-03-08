@@ -170,6 +170,12 @@ def _add_ai_summary_and_drivers(
         story.append(Paragraph(_escape(ai["what_to_watch"]), body_style))
     if ai.get("drivers_paragraph"):
         story.append(Paragraph(_escape(ai["drivers_paragraph"]), body_style))
+    if ai.get("chart_insights"):
+        story.append(Paragraph("<b>What the charts say about today's economy</b>", snapshot_heading_style))
+        story.append(Paragraph(_escape(ai["chart_insights"]).replace("\n", "<br/>"), body_style))
+    if ai.get("asset_implications"):
+        story.append(Paragraph("<b>Asset implications</b>", snapshot_heading_style))
+        story.append(Paragraph(_escape(ai["asset_implications"]), body_style))
     if drivers:
         story.append(Spacer(1, 0.15 * inch))
         story.append(Paragraph("Macro Drivers", snapshot_heading_style))

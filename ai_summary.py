@@ -18,7 +18,7 @@ except ImportError:
 
 # Token guardrails
 MAX_INPUT_TOKENS = 1800
-MAX_OUTPUT_TOKENS = 500
+MAX_OUTPUT_TOKENS = 800
 
 # Cache: key by (report_date, hash(signals + headlines))
 def _cache_key(signals: dict, news: list) -> str:
@@ -168,7 +168,9 @@ Respond with exactly this JSON (no other text):
   "executive_summary": "3-6 bullet points, max 120 words total. One line per point.",
   "what_changed": "2-4 sentences on what moved recently, max 80 words.",
   "what_to_watch": "2-3 sentences on what to watch next, max 60 words.",
-  "drivers_paragraph": "One short paragraph linking headlines to chart signals when relevant, or empty string if not useful."
+  "drivers_paragraph": "One short paragraph linking headlines to chart signals when relevant, or empty string if not useful.",
+  "chart_insights": "3-5 short bullet points: what the key charts (liquidity, macro risk, yield curve, credit, financial conditions, rotation) say about today's economy. Reference specific signals from the payload (e.g. yield curve state, liquidity_trend, credit_stress_state). Max 150 words total.",
+  "asset_implications": "One short paragraph (2-4 sentences): Given current conditions, what asset class tilts or pivots might be worth considering? Phrase as thoughtful interpretation, e.g. 'Due to [X], one might consider tilting toward [Y].' Reference specific signals. Not investment advice. Max 100 words."
 }}"""
 
     try:
@@ -193,6 +195,8 @@ Respond with exactly this JSON (no other text):
             "what_changed": (data.get("what_changed") or "").strip(),
             "what_to_watch": (data.get("what_to_watch") or "").strip(),
             "drivers_paragraph": (data.get("drivers_paragraph") or "").strip(),
+            "chart_insights": (data.get("chart_insights") or "").strip(),
+            "asset_implications": (data.get("asset_implications") or "").strip(),
         }
         _write_cache(report_date, key, out)
         return out

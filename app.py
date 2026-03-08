@@ -533,6 +533,12 @@ if enable_ai or include_macro_drivers:
                 st.markdown(ai_result.get("what_to_watch", ""))
             if ai_result.get("drivers_paragraph"):
                 st.markdown(ai_result.get("drivers_paragraph", ""))
+            if ai_result.get("chart_insights"):
+                st.markdown("**What the charts say about today’s economy**")
+                st.markdown(ai_result.get("chart_insights", ""))
+            if ai_result.get("asset_implications"):
+                st.markdown("**Asset implications**")
+                st.markdown(ai_result.get("asset_implications", ""))
         st.divider()
     elif enable_ai and not ai_result:
         st.caption("AI interpretation unavailable. Charts and raw signals are still current.")
