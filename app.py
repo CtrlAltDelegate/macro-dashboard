@@ -1249,6 +1249,12 @@ if pdf_available() and build_dashboard_pdf:
             ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
             macro_drivers=macro_drivers_list if include_macro_drivers else [],
         )
+        # Pre-export chart figures to PNG so the PDF can embed them (avoids repeated export in builder)
+        for sec in _pdf_sections:
+            if sec.get("type") == "chart" and sec.get("fig") is not None:
+                png = _pdf_export_fn(sec["fig"])
+                if png is not None:
+                    sec["fig"] = png
         pdf_bytes = build_dashboard_pdf(
             _pdf_sections,
             report_date=date.today().isoformat(),

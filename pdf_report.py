@@ -32,11 +32,15 @@ try:
     _RULE_COLOR = colors.HexColor("#30363d")
     _PLACEHOLDER_COLOR = colors.HexColor("#888888")
     _NEUTRAL_C = colors.HexColor("#8b949e")
+    # Light theme for PDF snapshot (readable when printed)
+    _SNAPSHOT_BG = colors.HexColor("#f0f2f5")
+    _SNAPSHOT_BORDER = colors.HexColor("#d0d4d9")
 except ImportError:
     _REPORTLAB_AVAILABLE = False
     _PAGE_CONTENT_WIDTH = _CHART_WIDTH = _MAX_CHART_HEIGHT = _RADAR_SIZE = None
     _REPORT_TITLE_C = _REPORT_DATE_C = _REPORT_HEADING_C = _BODY_TEXT_C = None
     _READOUT_BG = _READOUT_BORDER = _RULE_COLOR = _PLACEHOLDER_COLOR = _NEUTRAL_C = None
+    _SNAPSHOT_BG = _SNAPSHOT_BORDER = None
 
 # Public constants for layout (used only when reportlab is available)
 PAGE_CONTENT_WIDTH = _PAGE_CONTENT_WIDTH or 504  # fallback points
@@ -52,6 +56,8 @@ READOUT_BORDER = _READOUT_BORDER
 RULE_COLOR = _RULE_COLOR
 PLACEHOLDER_COLOR = _PLACEHOLDER_COLOR
 NEUTRAL = _NEUTRAL_C
+SNAPSHOT_BG = _SNAPSHOT_BG
+SNAPSHOT_BORDER = _SNAPSHOT_BORDER
 
 
 class SnapshotDict(TypedDict, total=False):
@@ -108,7 +114,7 @@ def _add_snapshot_table(
     snapshot_label_style: Any,
     snapshot_value_style: Any,
 ) -> None:
-    """Append Today's Snapshot card (dark-style) to story."""
+    """Append Today's Snapshot card (light, print-friendly) to story."""
     rows = []
     if snapshot.get("macro_score") and snapshot.get("zone_label"):
         rows.append(["Market Risk Score", f"{snapshot['macro_score']} — {snapshot['zone_label']}"])
@@ -131,8 +137,8 @@ def _add_snapshot_table(
     ]
     tbl = Table(table_data, colWidths=[col0_w, col1_w])
     tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), READOUT_BG),
-        ("BOX", (0, 0), (-1, -1), 0.5, READOUT_BORDER),
+        ("BACKGROUND", (0, 0), (-1, -1), SNAPSHOT_BG),
+        ("BOX", (0, 0), (-1, -1), 0.5, SNAPSHOT_BORDER),
         ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
@@ -227,12 +233,12 @@ def build_dashboard_pdf(
     )
     styles = getSampleStyleSheet()
 
-    # Executive header (dark bar style via table)
+    # Executive header (dark text on white for print readability)
     title_style = ParagraphStyle(
         name="ReportTitle",
         parent=styles["Heading1"],
         fontSize=20,
-        textColor=REPORT_TITLE,
+        textColor=REPORT_HEADING,
         spaceAfter=2,
         spaceBefore=0,
         alignment=TA_LEFT,
@@ -242,7 +248,7 @@ def build_dashboard_pdf(
         name="ReportSubtitle",
         parent=styles["Normal"],
         fontSize=9,
-        textColor=REPORT_DATE,
+        textColor=BODY_TEXT,
         spaceAfter=10,
         spaceBefore=0,
         alignment=TA_LEFT,
@@ -279,7 +285,7 @@ def build_dashboard_pdf(
         name="SnapshotLabel",
         parent=styles["Normal"],
         fontSize=9,
-        textColor=NEUTRAL,
+        textColor=REPORT_HEADING,
     )
     snapshot_value_style = ParagraphStyle(
         name="SnapshotValue",
