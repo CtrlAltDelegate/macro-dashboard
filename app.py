@@ -1203,16 +1203,8 @@ if pdf_available() and build_dashboard_pdf:
         png, _ = _try_export_png(_fig_for_pdf(fig))
         return png
 
-    _pdf_export_error = None
-    for _fig in (fig_liquidity, fig1, fig2, fig_yield, fig_fci, fig_credit, fig3, fig4):
-        if _fig is not None:
-            _, _err = _try_export_png(_fig)
-            if _err is not None:
-                _pdf_export_error = _err
-            break
-
     try:
-        _pdf_sections = _build_pdf_sections(
+        _pdf_sections_full = _build_pdf_sections(
             lookback=lookback,
             show_event_markers=show_event_markers,
             show_10y_3m_lines=show_10y_3m_lines,
@@ -1243,12 +1235,8 @@ if pdf_available() and build_dashboard_pdf:
             ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
             macro_drivers=macro_drivers_list if include_macro_drivers else [],
         )
-        # Pre-export chart figures to PNG so the PDF can embed them (avoids repeated export in builder)
-        for sec in _pdf_sections:
-            if sec.get("type") == "chart" and sec.get("fig") is not None:
-                png = _pdf_export_fn(sec["fig"])
-                if png is not None:
-                    sec["fig"] = png
+        # PDF = summary only (no chart images), so it always works with zero setup
+        _pdf_sections = _pdf_sections_full[:1] if _pdf_sections_full else []
         pdf_bytes = build_dashboard_pdf(
             _pdf_sections,
             report_date=date.today().isoformat(),
@@ -1263,14 +1251,7 @@ if pdf_available() and build_dashboard_pdf:
             mime="application/pdf",
             key="dl_pdf",
         )
-        if _pdf_export_error is not None:
-            with st.expander("Optional: include charts in PDF"):
-                st.caption("PDF downloaded. Charts are omitted when export isn’t available.")
-                st.code(_pdf_export_error, language="text")
-                st.markdown(
-                    "To include charts with **no extra setup**: install Kaleido (pip only), then restart the app.\n\n"
-                    "In the IDE: add **kaleido** to your environment (e.g. Pip: `kaleido`) and reinstall dependencies. No terminal or Chromium needed."
-                )
+        st.caption("Summary only. View all charts in the dashboard above.")
     except Exception as e:
         st.caption(f"PDF could not be generated: {e}")
 

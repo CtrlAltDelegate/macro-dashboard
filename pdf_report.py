@@ -390,6 +390,10 @@ def build_dashboard_pdf(
             ))
         story.append(Spacer(1, 0.2 * inch))
 
+    if not chart_sections:
+        story.append(Spacer(1, 0.15 * inch))
+        story.append(Paragraph("Charts: view in the web dashboard.", placeholder_style))
+
     doc.build(story)
     buf.seek(0)
     return buf.getvalue()
