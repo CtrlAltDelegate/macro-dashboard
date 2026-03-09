@@ -194,13 +194,23 @@ Respond with exactly this JSON (no other text):
             if start >= 0 and end > start:
                 content = content[start:end]
         data = json.loads(content)
+
+        def _to_str(v: Any) -> str:
+            if v is None:
+                return ""
+            if isinstance(v, str):
+                return v.strip()
+            if isinstance(v, list):
+                return "\n".join(str(x).strip() for x in v if str(x).strip()).strip()
+            return str(v).strip()
+
         out = {
-            "executive_summary": (data.get("executive_summary") or "").strip(),
-            "what_changed": (data.get("what_changed") or "").strip(),
-            "what_to_watch": (data.get("what_to_watch") or "").strip(),
-            "drivers_paragraph": (data.get("drivers_paragraph") or "").strip(),
-            "chart_insights": (data.get("chart_insights") or "").strip(),
-            "asset_implications": (data.get("asset_implications") or "").strip(),
+            "executive_summary": _to_str(data.get("executive_summary")),
+            "what_changed": _to_str(data.get("what_changed")),
+            "what_to_watch": _to_str(data.get("what_to_watch")),
+            "drivers_paragraph": _to_str(data.get("drivers_paragraph")),
+            "chart_insights": _to_str(data.get("chart_insights")),
+            "asset_implications": _to_str(data.get("asset_implications")),
         }
         _write_cache(report_date, key, out)
         return out
