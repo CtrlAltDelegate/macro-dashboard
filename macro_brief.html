@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Macro Intelligence Brief</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ========== CSS CUSTOM PROPERTIES ========== */
+    :root {
+      --bg-base: #0A0D12;
+      --bg-card: #111520;
+      --bg-card-hover: #161B2E;
+      --border: #1E2535;
+      --accent-cyan: #00E5FF;
+      --accent-amber: #FFB300;
+      --accent-red: #FF4444;
+      --accent-green: #00E676;
+      --text-primary: #E8EDF5;
+      --text-muted: #5A6478;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-sans: 'DM Sans', system-ui, sans-serif;
+      --radius: 8px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+      --transition: 0.2s ease;
+    }
+
+    /* ========== RESET & BASE ========== */
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ========== LAYOUT CONTAINER ========== */
+    .brief {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    /* Sharp geometric section dividers */
+    .section-divider {
+      height: 2px;
+      background: linear-gradient(90deg, transparent 0%, var(--accent-cyan) 15%, var(--border) 50%, var(--accent-cyan) 85%, transparent 100%);
+      margin: 1.5rem 0;
+      opacity: 0.6;
+    }
+
+    /* ========== 1. HEADER BAR ========== */
+    .header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 1.5rem;
+    }
+    .header-bar__title {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 1.25rem;
+      letter-spacing: 0.02em;
+      color: var(--accent-cyan);
+    }
+    .header-bar__meta {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .header-bar__meta .data-value { color: var(--text-primary); }
+
+    /* ========== 2. HERO SNAPSHOT ROW — 5 KPI CARDS ========== */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (max-width: 900px) {
+      .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 500px) {
+      .kpi-strip { grid-template-columns: 1fr; }
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+    }
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent-cyan);
+      box-shadow: 0 8px 32px rgba(0, 229, 255, 0.08);
+    }
+    .kpi-card__label {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    .kpi-card__value {
+      font-family: var(--font-mono);
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+    .kpi-card__value.data-value { color: var(--text-primary); }
+    .kpi-card__value--green { color: var(--accent-green); }
+    .kpi-card__value--amber { color: var(--accent-amber); }
+    .kpi-card__value--red { color: var(--accent-red); }
+    .kpi-card__value--cyan { color: var(--accent-cyan); }
+    .kpi-card__badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      margin-top: 0.25rem;
+    }
+    .kpi-card__badge--green { background: rgba(0, 230, 118, 0.15); color: var(--accent-green); }
+    .kpi-card__badge--amber { background: rgba(255, 179, 0, 0.15); color: var(--accent-amber); }
+    .kpi-card__badge--red { background: rgba(255, 68, 68, 0.15); color: var(--accent-red); }
+    .kpi-card__badge--cyan { background: rgba(0, 229, 255, 0.12); color: var(--accent-cyan); }
+    .kpi-card__badge.pulse {
+      animation: pulse-badge 2s ease-in-out infinite;
+    }
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.75; }
+    }
+
+    /* Market Risk — segmented bar gauge 0–100 */
+    .kpi-card--market-risk .kpi-gauge {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+      display: flex;
+    }
+    .kpi-gauge__segment {
+      flex: 1;
+      height: 100%;
+    }
+    .kpi-gauge__segment--low { background: var(--accent-green); }
+    .kpi-gauge__segment--moderate { background: var(--accent-amber); }
+    .kpi-gauge__segment--high { background: var(--accent-red); }
+    .kpi-gauge__segment--fill { background: var(--border); }
+
+    /* ========== 3. AI EXECUTIVE SUMMARY ========== */
+    .ai-summary {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.5rem;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    .ai-summary:hover {
+      border-color: rgba(0, 229, 255, 0.3);
+      box-shadow: var(--shadow);
+    }
+    .ai-summary__title {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .ai-summary__section {
+      margin-bottom: 1.25rem;
+    }
+    .ai-summary__section:last-child { margin-bottom: 0; }
+    .ai-summary__label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    .ai-summary__body {
+      font-family: var(--font-sans);
+      font-size: 0.9rem;
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .ai-summary__body .data-value { color: var(--text-primary); }
+
+    /* ========== 4. NEWS HEADLINES ========== */
+    .news-section__title {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+      margin-bottom: 1rem;
+    }
+    .news-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .news-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: transform var(--transition), border-color var(--transition), background var(--transition);
+    }
+    .news-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border);
+      transform: translateY(-1px);
+    }
+    .news-card__row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+    .news-card__num {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent-amber);
+      flex-shrink: 0;
+    }
+    .news-card__main { flex: 1; min-width: 0; }
+    .news-card__headline {
+      font-family: var(--font-sans);
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      margin-bottom: 0.25rem;
+    }
+    .news-card__meta {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    .news-card__summary {
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    .news-card.expanded .news-card__summary { max-height: 200px; }
+
+    /* ========== 5. CHART GRID ========== */
+    .charts-section__title {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent-cyan);
+      margin-bottom: 1rem;
+    }
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (max-width: 768px) {
+      .chart-grid { grid-template-columns: 1fr; }
+    }
+
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+      position: relative;
+    }
+    .chart-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(0, 229, 255, 0.35);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    .chart-card__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .chart-card__label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .chart-card__info {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--text-muted);
+      color: var(--text-muted);
+      font-size: 0.65rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: help;
+      flex-shrink: 0;
+    }
+    .chart-card__title {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-top: 0.2rem;
+    }
+    .chart-card__placeholder {
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      border: 2px dashed var(--border);
+      margin: 0 1rem 1rem;
+      border-radius: var(--radius);
+      background: rgba(30, 37, 53, 0.3);
+      position: relative;
+    }
+    .chart-card__placeholder::before {
+      content: 'CHART PLACEHOLDER';
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+    }
+    .chart-card__placeholder.has-chart::before { content: none; }
+    .chart-card__placeholder img,
+    .chart-card__placeholder canvas {
+      max-width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      position: absolute;
+      inset: 0;
+      margin: auto;
+    }
+    .chart-card__expand-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity var(--transition);
+      pointer-events: none;
+    }
+    .chart-card:hover .chart-card__expand-overlay { opacity: 1; }
+    .chart-card__expand-overlay span {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--accent-cyan);
+    }
+
+    /* ========== 6. FOOTER ========== */
+    .footer {
+      padding: 1rem 0;
+      border-top: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* ========== PRINT / EXPORT STYLESHEET ========== */
+    @media print {
+      :root {
+        --bg-base: #F5F6F8;
+        --bg-card: #FFFFFF;
+        --bg-card-hover: #FFFFFF;
+        --border: #DDE0E5;
+        --text-primary: #1A1D24;
+        --text-muted: #5A6478;
+        --accent-cyan: #0088AA;
+        --accent-amber: #B38600;
+        --accent-red: #CC2222;
+        --accent-green: #00A858;
+      }
+      body { background: var(--bg-base); }
+      .kpi-card:hover,
+      .ai-summary:hover,
+      .news-card:hover,
+      .chart-card:hover {
+        transform: none;
+        box-shadow: none;
+      }
+      .kpi-card__badge.pulse { animation: none; }
+      .chart-card__expand-overlay { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="brief">
+    <!-- ========== 1. HEADER BAR ========== -->
+    <header class="header-bar">
+      <h1 class="header-bar__title">Macro Intelligence Brief</h1>
+      <div class="header-bar__meta">
+        <span>Report date: <span class="data-value" data-field="report-date">2026-03-09</span></span>
+        <span>Lookback: <span class="data-value" data-field="lookback">5y</span></span>
+        <span>Data: <span class="data-value" data-field="data-sources">FRED, Yahoo Finance</span></span>
+      </div>
+    </header>
+    <div class="section-divider" aria-hidden="true"></div>
+
+    <!-- ========== 2. HERO SNAPSHOT ROW — 5 KPI CARDS ========== -->
+    <section class="kpi-strip">
+      <div class="kpi-card kpi-card--market-risk">
+        <div class="kpi-card__label">Market Risk Score</div>
+        <div class="kpi-card__value data-value" data-field="macro-risk-value">41</div>
+        <div class="kpi-card__value kpi-card__value--cyan">/ 100</div>
+        <span class="kpi-card__badge kpi-card__badge--cyan" data-field="macro-risk-badge">MODERATE</span>
+        <div class="kpi-gauge" aria-hidden="true">
+          <div class="kpi-gauge__segment kpi-gauge__segment--low" style="flex: 25;"></div>
+          <div class="kpi-gauge__segment kpi-gauge__segment--moderate" style="flex: 16;"></div>
+          <div class="kpi-gauge__segment kpi-gauge__segment--fill" style="flex: 59;"></div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card__label">Liquidity</div>
+        <div class="kpi-card__value data-value kpi-card__value--red" data-field="liquidity-value">Contracting</div>
+        <span class="kpi-card__value data-value" data-field="liquidity-yoy">-1.9% YoY</span>
+        <span class="kpi-card__badge kpi-card__badge--red pulse" data-field="liquidity-badge">CONTRACTING</span>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card__label">Yield Curve</div>
+        <div class="kpi-card__value data-value kpi-card__value--green" data-field="yield-value">0.43%</div>
+        <span class="kpi-card__badge kpi-card__badge--green" data-field="yield-badge">NORMAL</span>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card__label">Credit Stress</div>
+        <div class="kpi-card__value data-value kpi-card__value--green" data-field="credit-value">Low</div>
+        <span class="kpi-card__badge kpi-card__badge--green" data-field="credit-badge">LOW</span>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card__label">Financial Conditions</div>
+        <div class="kpi-card__value data-value kpi-card__value--green" data-field="fci-value">Easy</div>
+        <span class="kpi-card__badge kpi-card__badge--green" data-field="fci-badge">EASY</span>
+      </div>
+    </section>
+    <div class="section-divider" aria-hidden="true"></div>
+
+    <!-- ========== 3. AI EXECUTIVE SUMMARY ========== -->
+    <section class="ai-summary">
+      <h2 class="ai-summary__title">AI Executive Summary</h2>
+      <div class="ai-summary__section">
+        <div class="ai-summary__label">Overview</div>
+        <div class="ai-summary__body">
+          <span class="data-value" data-field="ai-overview">Macro risk is moderate (41/100). Liquidity is contracting; yield curve is normal; credit stress and financial conditions remain supportive. Oil and inflation headlines warrant monitoring.</span>
+        </div>
+      </div>
+      <div class="ai-summary__section">
+        <div class="ai-summary__label">What Changed</div>
+        <div class="ai-summary__body">
+          <span class="data-value" data-field="ai-what-changed">Oil prices have risen on geopolitical tensions; consumer inflation in China picked up. U.S. financial conditions remain easy.</span>
+        </div>
+      </div>
+      <div class="ai-summary__section">
+        <div class="ai-summary__label">What to Watch</div>
+        <div class="ai-summary__body">
+          <span class="data-value" data-field="ai-what-to-watch">Iran conflict impact on oil; China inflation trend; any shift in Fed messaging as oil feeds into inflation expectations.</span>
+        </div>
+      </div>
+      <div class="ai-summary__section">
+        <div class="ai-summary__label">Chart Signals</div>
+        <div class="ai-summary__body">
+          <span class="data-value" data-field="ai-chart-signals">Liquidity YoY negative; yield curve steepening from inversion; credit spreads contained; macro risk score in moderate band.</span>
+        </div>
+      </div>
+      <div class="ai-summary__section">
+        <div class="ai-summary__label">Asset Implications</div>
+        <div class="ai-summary__body">
+          <span class="data-value" data-field="ai-asset-implications">Given easy financial conditions and contained credit stress, risk assets can remain supported; rising oil suggests watching inflation-sensitive duration and real assets.</span>
+        </div>
+      </div>
+    </section>
+    <div class="section-divider" aria-hidden="true"></div>
+
+    <!-- ========== 4. NEWS HEADLINES ========== -->
+    <section class="news-section">
+      <h2 class="news-section__title">News Headlines</h2>
+      <div class="news-cards">
+        <article class="news-card" data-news="1">
+          <div class="news-card__row">
+            <span class="news-card__num">1.</span>
+            <div class="news-card__main">
+              <div class="news-card__headline data-value" data-field="news-1-headline">China consumer inflation rises in February</div>
+              <div class="news-card__meta"><span class="data-value" data-field="news-1-source">CNBC</span> · <span class="data-value" data-field="news-1-date">2026-03-09</span></div>
+              <div class="news-card__summary">Consumer prices in China increased more than expected, adding to global inflation concerns.</div>
+            </div>
+          </div>
+        </article>
+        <article class="news-card" data-news="2">
+          <div class="news-card__row">
+            <span class="news-card__num">2.</span>
+            <div class="news-card__main">
+              <div class="news-card__headline data-value" data-field="news-2-headline">U.S. stock futures edge higher</div>
+              <div class="news-card__meta"><span class="data-value" data-field="news-2-source">MarketWatch</span> · <span class="data-value" data-field="news-2-date">2026-03-09</span></div>
+              <div class="news-card__summary">Futures point to a modestly positive open as investors weigh macro data.</div>
+            </div>
+          </div>
+        </article>
+        <article class="news-card" data-news="3">
+          <div class="news-card__row">
+            <span class="news-card__num">3.</span>
+            <div class="news-card__main">
+              <div class="news-card__headline data-value" data-field="news-3-headline">Oil prices jump on Iran conflict fears</div>
+              <div class="news-card__meta"><span class="data-value" data-field="news-3-source">NPR Business</span> · <span class="data-value" data-field="news-3-date">2026-03-09</span></div>
+              <div class="news-card__summary">WTI and Brent rise amid supply concerns and Middle East tensions.</div>
+            </div>
+          </div>
+        </article>
+        <article class="news-card" data-news="4">
+          <div class="news-card__row">
+            <span class="news-card__num">4.</span>
+            <div class="news-card__main">
+              <div class="news-card__headline data-value" data-field="news-4-headline">Fed officials signal patience on rates</div>
+              <div class="news-card__meta"><span class="data-value" data-field="news-4-source">BBC Business</span> · <span class="data-value" data-field="news-4-date">2026-03-08</span></div>
+              <div class="news-card__summary">Central bank emphasizes data dependence amid mixed inflation signals.</div>
+            </div>
+          </div>
+        </article>
+        <article class="news-card" data-news="5">
+          <div class="news-card__row">
+            <span class="news-card__num">5.</span>
+            <div class="news-card__main">
+              <div class="news-card__headline data-value" data-field="news-5-headline">The Big Winner From the Persian Gulf Energy Crisis? Russia</div>
+              <div class="news-card__meta"><span class="data-value" data-field="news-5-source">Yahoo Finance</span> · <span class="data-value" data-field="news-5-date">2026-03-07</span></div>
+              <div class="news-card__summary">No summary.</div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+    <div class="section-divider" aria-hidden="true"></div>
+
+    <!-- ========== 5. CHART GRID — 14 PLACEHOLDER CARDS (injection points) ========== -->
+    <section class="charts-section">
+      <h2 class="charts-section__title">Charts</h2>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 1</div>
+              <div class="chart-card__title">Global Liquidity</div>
+            </div>
+            <span class="chart-card__info" title="Fed balance sheet YoY">i</span>
+          </div>
+          <div id="chart-1-global-liquidity" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 2</div>
+              <div class="chart-card__title">Stock Market Pressure</div>
+            </div>
+            <span class="chart-card__info" title="Rates, inflation, unemployment, liquidity composite">i</span>
+          </div>
+          <div id="chart-2-stock-market-pressure" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 3</div>
+              <div class="chart-card__title">Economic Risk Index</div>
+            </div>
+            <span class="chart-card__info" title="Multi-indicator composite + ROC line">i</span>
+          </div>
+          <div id="chart-3-economic-risk-index" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 4</div>
+              <div class="chart-card__title">Yield Curve (10Y–3M)</div>
+            </div>
+            <span class="chart-card__info" title="Inversion = recession signal">i</span>
+          </div>
+          <div id="chart-4-yield-curve" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 5</div>
+              <div class="chart-card__title">Financial Conditions (NFCI)</div>
+            </div>
+            <span class="chart-card__info" title="Chicago Fed index">i</span>
+          </div>
+          <div id="chart-5-financial-conditions" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 6</div>
+              <div class="chart-card__title">Credit Spreads (HY OAS)</div>
+            </div>
+            <span class="chart-card__info" title="ICE BofA High Yield; 3%=calm, 5%=stress, 7%=high stress">i</span>
+          </div>
+          <div id="chart-6-credit-spreads" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 7</div>
+              <div class="chart-card__title">Market Risk Level (0–100)</div>
+            </div>
+            <span class="chart-card__info" title="Composite score with risk bands">i</span>
+          </div>
+          <div id="chart-7-market-risk-level" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 8</div>
+              <div class="chart-card__title">Oil (WTI)</div>
+            </div>
+            <span class="chart-card__info" title="Commodity & inflation signal">i</span>
+          </div>
+          <div id="chart-8-oil-wti" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 9</div>
+              <div class="chart-card__title">Bitcoin (BTC/USD)</div>
+            </div>
+            <span class="chart-card__info" title="With optional liquidity/TIPS overlays">i</span>
+          </div>
+          <div id="chart-9-bitcoin" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 10</div>
+              <div class="chart-card__title">Bitcoin Rainbow</div>
+            </div>
+            <span class="chart-card__info" title="Log regression bands">i</span>
+          </div>
+          <div id="chart-10-bitcoin-rainbow" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 11</div>
+              <div class="chart-card__title">S&P 500 with Risk Bands</div>
+            </div>
+            <span class="chart-card__info" title="Price over macro risk zones">i</span>
+          </div>
+          <div id="chart-11-sp500-risk-bands" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 12</div>
+              <div class="chart-card__title">Bitcoin with Risk Bands</div>
+            </div>
+            <span class="chart-card__info" title="Same shading as S&P card">i</span>
+          </div>
+          <div id="chart-12-bitcoin-risk-bands" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 13</div>
+              <div class="chart-card__title">Oil with Risk Bands</div>
+            </div>
+            <span class="chart-card__info" title="Oil price over risk zones">i</span>
+          </div>
+          <div id="chart-13-oil-risk-bands" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__header">
+            <div>
+              <div class="chart-card__label">Chart 14</div>
+              <div class="chart-card__title">Rotation Ladder</div>
+            </div>
+            <span class="chart-card__info" title="Z-score normalized risk-on vs defensive ratios">i</span>
+          </div>
+          <div id="chart-14-rotation-ladder" class="chart-card__placeholder"></div>
+          <div class="chart-card__expand-overlay"><span>Click to expand</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 6. FOOTER ========== -->
+    <footer class="footer">
+      Data: <span class="data-value" data-field="footer-sources">FRED, Yahoo Finance</span>
+    </footer>
+  </div>
+
+  <script>
+    // News cards: expand on click to show full summary
+    document.querySelectorAll('.news-card').forEach(function (card) {
+      card.addEventListener('click', function () {
+        this.classList.toggle('expanded');
+      });
+    });
+
+    // Chart injection helper: call from app when embedding images
+    // window.injectChart('chart-1-global-liquidity', imageElementOrSrc);
+    window.injectChart = function (id, imgOrSrc) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.classList.add('has-chart');
+      el.innerHTML = '';
+      if (typeof imgOrSrc === 'string') {
+        var img = document.createElement('img');
+        img.src = imgOrSrc;
+        img.alt = 'Chart';
+        el.appendChild(img);
+      } else if (imgOrSrc && imgOrSrc.nodeName) {
+        el.appendChild(imgOrSrc);
+      }
+    };
+  </script>
+</body>
+</html>
