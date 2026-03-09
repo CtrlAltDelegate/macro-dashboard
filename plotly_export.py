@@ -11,6 +11,27 @@ from typing import Any
 PLOTLY_JS = "https://cdn.plot.ly/plotly-2.27.0.min.js"
 
 
+def _json_serializable(obj: Any) -> Any:
+    """Convert numpy types and nested structures so json.dumps works."""
+    try:
+        import numpy as np
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        if isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+    except ImportError:
+        pass
+    if isinstance(obj, dict):
+        return {k: _json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_serializable(v) for v in obj]
+    return obj
+
+
 def export_plotly_to_png(
     fig: Any,
     *,
@@ -38,16 +59,15 @@ def export_plotly_to_png(
         if h is not None:
             height = int(h)
 
-    # Serialize figure for Plotly.js (fig.to_dict() gives {data, layout})
+    # Serialize figure for Plotly.js (fig.to_dict() can contain numpy arrays)
     try:
         fig_dict = fig.to_dict()
     except Exception:
         return None
-    data = fig_dict.get("data", [])
-    layout_dict = fig_dict.get("layout", {})
+    data = _json_serializable(fig_dict.get("data", []))
+    layout_dict = _json_serializable(fig_dict.get("layout", {}))
     layout_dict["width"] = width
     layout_dict["height"] = height
-    # Avoid responsive sizing so dimensions are exact
     layout_dict["autosize"] = False
     figure_json = json.dumps({"data": data, "layout": layout_dict})
 
