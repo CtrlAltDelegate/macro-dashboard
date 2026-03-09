@@ -86,18 +86,15 @@ def export_plotly_to_png(
 </body>
 </html>"""
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": width + 20, "height": height + 20})
-            page.set_content(html, wait_until="networkidle")
-            page.wait_for_timeout(800)
-            chart = page.locator("#chart")
-            png_bytes = chart.screenshot(type="png")
-            browser.close()
-        return png_bytes
-    except Exception:
-        return None
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": width + 20, "height": height + 20})
+        page.set_content(html, wait_until="networkidle")
+        page.wait_for_timeout(800)
+        chart = page.locator("#chart")
+        png_bytes = chart.screenshot(type="png")
+        browser.close()
+    return png_bytes
 
 
 def export_plotly_to_png_or_error(
@@ -122,9 +119,9 @@ def export_plotly_to_png_or_error(
         out = export_plotly_to_png(fig, width=width, height=height, scale=1)
     except Exception as e:
         err = str(e).strip()
-        if "Executable doesn't exist" in err or "chromium" in err.lower():
-            return None, "Chromium not installed. Run: playwright install chromium"
+        if "Executable doesn't exist" in err or "chromium" in err.lower() or "browserType.launch" in err:
+            return None, "Chromium not installed. In a terminal run: python -m playwright install chromium"
         return None, err or "Playwright export failed"
     if out is not None:
         return out, None
-    return None, "Export failed. Run: python -m playwright install chromium"
+    return None, "Export returned no image (run: python -m playwright install chromium)"
