@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import io
 import os
+import warnings
 from datetime import date
+
+# Reduce log noise: Kaleido <1.0 is deprecated; upgrade with pip install 'kaleido>=1.0.0'
+warnings.filterwarnings("ignore", message=".*Kaleido versions less than 1.0.0.*", category=DeprecationWarning)
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -499,7 +503,25 @@ if include_macro_drivers:
     with st.spinner("Fetching macro headlines…"):
         _news = fetch_recent_macro_news(max_articles=12, max_age_days=7)
         macro_drivers_list = rank_macro_relevance(_news, max_return=5)
-if enable_ai and (getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")):
+
+# Sync OpenAI key from Streamlit secrets at runtime (Cloud often has secrets only per-request)
+def _ensure_openai_key():
+    if os.getenv("OPENAI_API_KEY"):
+        return
+    try:
+        if hasattr(st, "secrets"):
+            ak = getattr(st.secrets, "OPENAI_API_KEY", None)
+            if not ak and "OPENAI_API_KEY" in st.secrets:
+                ak = st.secrets["OPENAI_API_KEY"]
+            if not ak and hasattr(st.secrets, "openai"):
+                ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
+            if ak:
+                os.environ["OPENAI_API_KEY"] = str(ak)
+    except Exception:
+        pass
+
+if enable_ai:
+    _ensure_openai_key()
     payload = build_macro_signal_payload(
         macro_risk_score=float(thermo_series.iloc[-1]) if not thermo_series.empty else None,
         macro_risk_zone=zone_label or None,
@@ -524,7 +546,11 @@ if enable_ai and (getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_A
         ai_result = generate_ai_summary(payload, macro_drivers_list, date.today().isoformat())
 
 if enable_ai or include_macro_drivers:
-    if ai_result:
+    if ai_result and ai_result.get("_error"):
+        st.markdown("#### AI Interpretation")
+        st.error(f"AI request failed: {ai_result['_error']}")
+        st.caption("Charts and raw signals are still current.")
+    elif ai_result and "executive_summary" in ai_result:
         st.markdown("#### AI Interpretation")
         with st.container():
             st.markdown("**Executive summary**")
@@ -546,7 +572,7 @@ if enable_ai or include_macro_drivers:
         st.divider()
     elif enable_ai and not ai_result:
         st.caption(
-            "AI interpretation unavailable. Add **OPENAI_API_KEY** in Settings → Secrets (Streamlit Cloud) or in `.env` / `.streamlit/secrets.toml` (local), then reload. Charts and raw signals are still current."
+            "AI interpretation unavailable. Add **OPENAI_API_KEY** as a root-level key in Settings → Secrets (Streamlit Cloud) or in `.env` / `.streamlit/secrets.toml` (local), save, then **Reboot** the app. Charts and raw signals are still current."
         )
     if macro_drivers_list:
         st.markdown("#### Macro Drivers")
@@ -1220,7 +1246,7 @@ if pdf_available() and build_dashboard_pdf:
             thermo_series=thermo_series,
             liquidity_yoy_series=liquidity_yoy_series,
             cpi_series=cpi_series,
-            ai_summary=ai_result if enable_ai else None,
+            ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
             macro_drivers=macro_drivers_list if include_macro_drivers else [],
         )
         pdf_bytes = build_dashboard_pdf(

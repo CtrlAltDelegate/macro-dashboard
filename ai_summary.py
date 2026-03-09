@@ -152,7 +152,7 @@ def generate_ai_summary(
         except Exception:
             pass
     if not api_key:
-        return None
+        return None  # No key: caller can show "add OPENAI_API_KEY to Secrets"
 
     # Build compact prompt
     signals_str = json.dumps(signals, indent=0)
@@ -204,8 +204,8 @@ Respond with exactly this JSON (no other text):
         }
         _write_cache(report_date, key, out)
         return out
-    except Exception:
-        return None
+    except Exception as e:
+        return {"_error": str(e)}
 
 
 def ai_summary_available() -> bool:
