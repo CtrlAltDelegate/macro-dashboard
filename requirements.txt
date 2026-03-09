@@ -6,7 +6,8 @@ yfinance>=0.2.0
 plotly>=5.18.0
 streamlit>=1.28.0
 python-dotenv>=1.0.0
-# PDF and PNG chart export (no Kaleido): run once after install: playwright install chromium
+# Chart export: Kaleido first (pip only). Playwright optional if Kaleido fails.
+kaleido>=0.2.1
 playwright>=1.40.0
 reportlab>=4.0.0
 # AI interpretation (optional)

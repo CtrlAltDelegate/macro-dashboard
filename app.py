@@ -1264,12 +1264,12 @@ if pdf_available() and build_dashboard_pdf:
             key="dl_pdf",
         )
         if _pdf_export_error is not None:
-            with st.expander("Why are charts missing from the PDF?"):
+            with st.expander("Optional: include charts in PDF"):
+                st.caption("PDF downloaded. Charts are omitted when export isn’t available.")
                 st.code(_pdf_export_error, language="text")
                 st.markdown(
-                    "Charts are exported with **Playwright** (headless Chromium). Install once:\n\n"
-                    "```bash\npip install playwright\npython -m playwright install chromium\n```\n\n"
-                    "Then restart the app. On Streamlit Cloud, Chromium may not be available; the PDF will still include the summary and AI text."
+                    "To include charts with **no extra setup**: install Kaleido (pip only), then restart the app.\n\n"
+                    "In the IDE: add **kaleido** to your environment (e.g. Pip: `kaleido`) and reinstall dependencies. No terminal or Chromium needed."
                 )
     except Exception as e:
         st.caption(f"PDF could not be generated: {e}")

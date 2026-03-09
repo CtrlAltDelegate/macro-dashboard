@@ -1,14 +1,28 @@
 """
-Export Plotly figures to PNG using Playwright (no Kaleido).
-Run once: playwright install chromium
+Export Plotly figures to PNG. Tries Kaleido first (pip only, no Chromium).
+Falls back to Playwright if Kaleido isn't available or fails.
 """
 from __future__ import annotations
 
+import io
 import json
 from typing import Any
 
-# Plotly.js CDN (stable)
+# Plotly.js CDN (stable) — used only for Playwright fallback
 PLOTLY_JS = "https://cdn.plot.ly/plotly-2.27.0.min.js"
+
+
+def _try_kaleido(fig: Any, width: int, height: int) -> bytes | None:
+    """Use Kaleido if installed (no Chromium). Returns PNG bytes or None."""
+    if fig is None:
+        return None
+    try:
+        buf = io.BytesIO()
+        fig.write_image(buf, format="png", width=width, height=height)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception:
+        return None
 
 
 def _json_serializable(obj: Any) -> Any:
@@ -32,34 +46,12 @@ def _json_serializable(obj: Any) -> Any:
     return obj
 
 
-def export_plotly_to_png(
-    fig: Any,
-    *,
-    width: int = 800,
-    height: int = 450,
-    scale: float = 2,
-) -> bytes | None:
-    """
-    Export a Plotly figure to PNG bytes using headless Chromium via Playwright.
-    Returns None if Playwright is not installed or export fails.
-    """
-    if fig is None:
-        return None
+def _try_playwright(fig: Any, width: int, height: int) -> bytes | None:
+    """Use Playwright + Chromium. Returns PNG bytes or None."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         return None
-
-    layout = getattr(fig, "layout", None)
-    if layout is not None:
-        w = getattr(layout, "width", None)
-        h = getattr(layout, "height", None)
-        if w is not None:
-            width = int(w)
-        if h is not None:
-            height = int(h)
-
-    # Serialize figure for Plotly.js (fig.to_dict() can contain numpy arrays)
     try:
         fig_dict = fig.to_dict()
     except Exception:
@@ -70,7 +62,6 @@ def export_plotly_to_png(
     layout_dict["height"] = height
     layout_dict["autosize"] = False
     figure_json = json.dumps({"data": data, "layout": layout_dict})
-
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -85,16 +76,45 @@ def export_plotly_to_png(
   </script>
 </body>
 </html>"""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": width + 20, "height": height + 20})
+            page.set_content(html, wait_until="networkidle")
+            page.wait_for_timeout(800)
+            chart = page.locator("#chart")
+            png_bytes = chart.screenshot(type="png")
+            browser.close()
+        return png_bytes
+    except Exception:
+        return None
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": width + 20, "height": height + 20})
-        page.set_content(html, wait_until="networkidle")
-        page.wait_for_timeout(800)
-        chart = page.locator("#chart")
-        png_bytes = chart.screenshot(type="png")
-        browser.close()
-    return png_bytes
+
+def export_plotly_to_png(
+    fig: Any,
+    *,
+    width: int = 800,
+    height: int = 450,
+    scale: float = 2,
+) -> bytes | None:
+    """
+    Export Plotly figure to PNG. Tries Kaleido first (pip only), then Playwright.
+    """
+    if fig is None:
+        return None
+    layout = getattr(fig, "layout", None)
+    w, h = width, height
+    if layout is not None:
+        lw = getattr(layout, "width", None)
+        lh = getattr(layout, "height", None)
+        if lw is not None:
+            w = int(lw)
+        if lh is not None:
+            h = int(lh)
+    out = _try_kaleido(fig, w, h)
+    if out is not None:
+        return out
+    return _try_playwright(fig, w, h)
 
 
 def export_plotly_to_png_or_error(
@@ -105,23 +125,14 @@ def export_plotly_to_png_or_error(
 ) -> tuple[bytes | None, str | None]:
     """
     Export Plotly figure to PNG. Returns (png_bytes, None) or (None, error_message).
+    Tries Kaleido first (pip only); no Chromium needed if Kaleido works.
     """
     if fig is None:
         return None, "No figure"
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return (
-            None,
-            "Playwright not installed. Run: pip install playwright  then  python -m playwright install chromium",
-        )
-    try:
         out = export_plotly_to_png(fig, width=width, height=height, scale=1)
     except Exception as e:
-        err = str(e).strip()
-        if "Executable doesn't exist" in err or "chromium" in err.lower() or "browserType.launch" in err:
-            return None, "Chromium not installed. In a terminal run: python -m playwright install chromium"
-        return None, err or "Playwright export failed"
+        return None, str(e).strip() or "Chart export failed"
     if out is not None:
         return out, None
-    return None, "Export returned no image (run: python -m playwright install chromium)"
+    return None, "Charts need Kaleido or Playwright. Install Kaleido (no Chromium): pip install kaleido"
