@@ -69,14 +69,26 @@ def run_refresh(lookback: str = "5y") -> int:
     date_dir.mkdir(parents=True, exist_ok=True)
     latest_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        from plotly_export import export_plotly_to_png
+    except ImportError:
+        export_plotly_to_png = None
+
     for fig, name in zip(figs, EXPORT_NAMES):
         if fig is None:
             print(f"  Skip {name} (insufficient data)")
             continue
+        if export_plotly_to_png is None:
+            print(f"  Skip {name} (plotly_export not available; pip install playwright then python -m playwright install chromium)")
+            continue
+        png = export_plotly_to_png(fig, width=800, height=450)
+        if png is None:
+            print(f"  Failed {name} (run: python -m playwright install chromium)", file=sys.stderr)
+            continue
         for folder in (date_dir, latest_dir):
             path = folder / name
             try:
-                fig.write_image(str(path), format="png", scale=2)
+                path.write_bytes(png)
                 print(f"  Wrote {path.relative_to(config.PROJECT_ROOT)}")
             except Exception as e:
                 print(f"  Failed {path}: {e}", file=sys.stderr)

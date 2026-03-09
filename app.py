@@ -5,11 +5,7 @@ from __future__ import annotations
 
 import io
 import os
-import warnings
 from datetime import date
-
-# Reduce log noise: Kaleido <1.0 is deprecated; upgrade with pip install 'kaleido>=1.0.0'
-warnings.filterwarnings("ignore", message=".*Kaleido versions less than 1.0.0.*", category=DeprecationWarning)
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -93,18 +89,16 @@ except ImportError:
     generate_ai_summary = lambda *a, **k: None
     ai_summary_available = lambda: False
 
+try:
+    from plotly_export import export_plotly_to_png_or_error
+except ImportError:
+    def export_plotly_to_png_or_error(fig, *, width=800, height=450):
+        return None, "plotly_export not available"
+
 
 def _try_export_png(fig):
-    """Export Plotly figure to PNG bytes. Returns (bytes, None) or (None, error_msg).
-    On Streamlit Cloud, Kaleido requires Chrome which is not installed, so we skip export gracefully.
-    """
-    try:
-        buf = io.BytesIO()
-        fig.write_image(buf, format="png", scale=2)
-        buf.seek(0)
-        return buf.getvalue(), None
-    except Exception as e:
-        return None, str(e)
+    """Export Plotly figure to PNG via Playwright (no Kaleido). Returns (bytes, None) or (None, error_msg)."""
+    return export_plotly_to_png_or_error(fig, width=800, height=450)
 
 
 def _fig_for_pdf(fig):
@@ -1273,10 +1267,9 @@ if pdf_available() and build_dashboard_pdf:
             with st.expander("Why are charts missing from the PDF?"):
                 st.code(_pdf_export_error, language="text")
                 st.markdown(
-                    "Charts need **Kaleido** to export Plotly figures to PNG. "
-                    "**On Streamlit Cloud:** Chrome usually isn't available, so PDF chart export may not work; the rest of the PDF (summary, AI text, drivers) still generates. "
-                    "**Locally:** run `pip install kaleido --upgrade`, then if Kaleido 1.x complains about Chrome: "
-                    "`python -c \"import kaleido; kaleido.get_chrome_sync()\"` or install Chrome from Google."
+                    "Charts are exported with **Playwright** (headless Chromium). Install once:\n\n"
+                    "```bash\npip install playwright\npython -m playwright install chromium\n```\n\n"
+                    "Then restart the app. On Streamlit Cloud, Chromium may not be available; the PDF will still include the summary and AI text."
                 )
     except Exception as e:
         st.caption(f"PDF could not be generated: {e}")

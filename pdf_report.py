@@ -385,7 +385,7 @@ def build_dashboard_pdf(
                 story.append(Paragraph("[Chart image could not be embedded.]", placeholder_style))
         else:
             story.append(Paragraph(
-                "[Chart could not be embedded. Run the app locally with kaleido for PDFs with charts.]",
+                "[Chart could not be embedded. Run: pip install playwright  then  python -m playwright install chromium]",
                 placeholder_style,
             ))
         story.append(Spacer(1, 0.2 * inch))
