@@ -4,94 +4,151 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 
 ## Features
 
-- **Chart 1 — Valuation Pressure Index**  
-  `((SPX/UNRATE²) × INFLATION × FEDFUNDS) / M2`  
-  Rising = macro tightening; falling = easing.
+The dashboard is organized into four tabs:
 
-- **Chart 2 — Macro Risk Dashboard**  
-  Raw standardized composite + ROC (acceleration). Pillars: GDP, unemployment, inflation, NFCI, Fed liquidity, HY spread.
+### Macro (Core)
+- **Valuation Pressure Index** — `((SPX/UNRATE²) × INFLATION × FEDFUNDS) / M2`. Rising = macro tightening; falling = easing.
+- **Macro Risk Dashboard** — Standardized composite + rate-of-change (acceleration). Pillars: GDP, unemployment, inflation, NFCI, Fed liquidity, HY spread.
+- **Risk Thermostat (0–100)** — Allocation guide from risk-on → neutral → de-risk → defensive → capital preservation.
+- **Yield Curve** — 10Y–3M spread with optional individual rate overlays and event markers.
+- **Global Liquidity** — Fed balance sheet (WALCL) YoY.
 
-- **Chart 3 — Risk Thermostat (0–100)**  
-  Allocation guide: Risk-on → Neutral → De-risk → Defensive → Capital preservation.
+### Markets
+- **WTI Oil** — Spot price with optional YoY % and CPI overlay. Log scale toggle.
+- **Bitcoin** — Price with optional liquidity YoY and real yield (10Y TIPS) overlays. Log scale toggle.
+- **BTC Rainbow Bands** — Log-regression price channel with adjustable band width (σ).
 
-- **Chart 4 — Risk Cascade Curves**  
-  Relative strength ratios (ALT/BTC, BTC/SPY, IWM/SPY, HYG/IEF, XLU/SPY) to detect rotation order.
+### Regimes & Bands
+- **SPX Regime Bands** — S&P 500 regime overlays with optional log scale.
+- **Financial Conditions Index** — Chicago Fed NFCI.
+- **Credit Spreads** — ICE BofA US HY OAS.
+- **Rotation Ladder** — Z-score normalized ratios: ETH/BTC → BTC/SPX → SPX/Gold → Gold/Bonds. Detects rotation order from risk-on to defensive.
+- **Risk Cascade Curves** — Relative strength ratios: ALT/BTC, BTC/SPY, IWM/SPY, HYG/IEF, XLU/SPY.
+
+### Fiscal
+- **Deficit % GDP** — Federal surplus/deficit as % of GDP.
+- **Debt % GDP** — Federal debt as % of GDP.
+- **Interest Burden** — Net interest outlays as % of GDP.
+
+### Sidebar controls
+- **Macro lookback**: 1y, 3y, 5y, 10y, Max — applies to FRED data and rotation window.
+- **S&P 500 overlay** on Macro charts.
+- Individual toggles for yield curve lines, event markers, oil and BTC overlays.
+- **AI Interpretation** — AI-generated executive summary (requires OpenAI API key).
+- **Macro Drivers headlines** — 3–5 recent macro-relevant headlines from RSS feeds.
+- **Refresh data** button.
+
+---
 
 ## Setup
 
-1. **Clone / open project**, then:
+### 1. Install dependencies
 
-   ```bash
-   git clone https://github.com/CtrlAltDelegate/macro-dashboard.git
-   cd macro-dashboard
-   pip install -r requirements.txt
-   ```
+```bash
+git clone https://github.com/CtrlAltDelegate/macro-dashboard.git
+cd macro-dashboard
+pip install -r requirements.txt
+```
 
-2. **FRED API key** (free):  
-   [Create one](https://fred.stlouisfed.org/docs/api/api_key.html), then:
+### 2. FRED API key (free)
 
-   - Create a `.env` file (copy from `.env.example`) and set:
-     ```env
-     FRED_API_KEY=your_key_here
-     ```
-   - Or set the `FRED_API_KEY` environment variable.
+[Create one here](https://fred.stlouisfed.org/docs/api/api_key.html), then add it to a `.env` file (copy from `.env.example`):
 
-3. **Run the dashboard** (from the project root, i.e. the folder that contains `app.py`):
+```env
+FRED_API_KEY=your_key_here
+```
 
-   ```bash
-   streamlit run app.py
-   ```
+Or set it as an environment variable directly.
 
-   Or run `python run_app.py` from anywhere inside the repo—it switches to the project root first.
+### 3. Run the dashboard
 
-   Open the URL shown (e.g. http://localhost:8501). Use **Refresh data** in the sidebar to refetch; each chart has an **Export chart as PNG** button.
+From the project root (the folder containing `app.py`):
 
-4. **Macro lookback** (sidebar): choose **1y**, **3y**, **5y**, **10y**, or **Max**; it applies to FRED data and rotation window.
+```bash
+streamlit run app.py
+```
+
+Or from anywhere inside the repo:
+
+```bash
+python run_app.py
+```
+
+Open the URL shown (e.g. `http://localhost:8501`). Each chart has an **Export chart as PNG** button.
+
+---
+
+## Chart export (PNG)
+
+PNG export uses **Kaleido** (primary) with **Playwright** as a fallback.
+
+- Kaleido is installed via `pip install kaleido` (included in `requirements.txt`).
+- If Kaleido fails, install Playwright: `pip install playwright && playwright install chromium`.
+
+---
+
+## PDF report
+
+A **Download PDF report** button is available in the app. The PDF includes summary content and key metrics. For chart visuals, view them in the web dashboard and use the per-chart PNG export buttons.
+
+---
 
 ## Headless refresh (Tue/Fri export)
 
-To re-fetch data and export PNGs without opening the app (e.g. for Task Scheduler):
+Re-fetch data and export PNGs without opening the app (e.g. for Task Scheduler):
 
 ```powershell
 python refresh.py          # default 5y lookback
 python refresh.py 10y       # optional: 1y, 3y, 5y, 10y, Max
 ```
 
-Or run `scripts\refresh.ps1` from the project root. Output:
+Or run `scripts\refresh.ps1` from the project root.
 
-- **exports\\latest\\** — four PNGs: `01_valuation_pressure_index.png`, `02_macro_risk_raw_roc.png`, `03_risk_thermostat.png`, `04_risk_cascade_rotation.png`
-- **exports\\YYYY-MM-DD\\** — same files, dated for that run
+**Output:**
+- `exports\latest\` — four PNGs: `01_valuation_pressure_index.png`, `02_macro_risk_raw_roc.png`, `03_risk_thermostat.png`, `04_risk_cascade_rotation.png`
+- `exports\YYYY-MM-DD\` — same files, archived by date
 
-**Windows Task Scheduler (Tue/Fri 7:00 AM):** see **[SCHEDULE.md](SCHEDULE.md)** for step-by-step setup.
+**Windows Task Scheduler (Tue/Fri 7:00 AM):** see [SCHEDULE.md](SCHEDULE.md) for step-by-step setup.
 
-## Data
+---
 
-- **Macro**: FRED (St. Louis Fed) — free with API key.
-- **Rotation (Chart 4)**: Yahoo Finance — no key required.
-- **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
-- **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash.
+## Data sources
+
+| Source | Used for | Key required? |
+|--------|----------|---------------|
+| FRED (St. Louis Fed) | All macro data | Yes — free at fred.stlouisfed.org |
+| Yahoo Finance | Rotation charts (ETFs, BTC, ETH) | No |
+| RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) | Macro Drivers headlines | No |
+| OpenAI (optional) | AI interpretation summary | Yes — set `OPENAI_API_KEY` in `.env` |
+
+AI interpretation uses **gpt-4o-mini** for low cost. Output is cached by report date and signal hash.
+
+---
 
 ## Troubleshooting
 
-- **"Main module does not exist" / FileNotFoundError when running Streamlit**  
-  Streamlit must run with the **project root** as the current directory (the folder that contains `app.py`). From a terminal, `cd` into the cloned repo (e.g. `cd macro-dashboard`) and run `streamlit run app.py` there. Or use `python run_app.py`, which changes to the project root for you.
+**"Main module does not exist" / FileNotFoundError**
+Streamlit must run from the project root (the folder containing `app.py`). Use `cd macro-dashboard` then `streamlit run app.py`, or use `python run_app.py` which handles the `cd` automatically.
 
-- **Streamlit Community Cloud — "directory … does not exist"**  
-  The repo has **no subfolder** named `RiskCycle`. `app.py` is at the **root** of the repo. In Streamlit Cloud → your app → **Settings**: set **Main file path** to **`app.py`** (not `RiskCycle/app.py`). Leave **App root** blank or as the repo root. Add `FRED_API_KEY` under **Secrets** (see below).
+**Streamlit Community Cloud — "directory … does not exist"**
+`app.py` is at the repo root — there is no `RiskCycle/` subfolder. In Streamlit Cloud → your app → **Settings**: set **Main file path** to `app.py`. Leave **App root** blank.
 
-- **Streamlit Cloud: FRED key in Secrets but app still says "not set"**  
-  In **Settings → Secrets**, use a **root-level** key (no section). Example:
-  ```toml
-  FRED_API_KEY = "your_actual_key_here"
-  ```
-  Not under `[api]` or similar. The app reads from `st.secrets["FRED_API_KEY"]` and sets the env var so the data layer can use it. Save, then **Reboot** the app so it picks up the secret.
+**Streamlit Cloud: FRED key in Secrets but app still says "not set"**
+In **Settings → Secrets**, use a root-level key (no section header):
+```toml
+FRED_API_KEY = "your_actual_key_here"
+```
+Not under `[api]` or any other section. After saving, click **Reboot** the app.
+
+---
 
 ## GitHub + Netlify
 
-- **Landing page**: The `landing/` folder is a static site (HTML/CSS) you can deploy to **Netlify**. Netlify hosts static files only—the live dashboard runs on your machine (or [Streamlit Community Cloud](https://share.streamlit.io/) if you host it there).
-- **Deploy to Netlify**: Connect the repo; the repo’s `netlify.toml` runs `python scripts/build_landing.py` (writes the landing page into `public/`) and publishes **public**. No need for a `landing` folder in the repo—the build script embeds the page. If you have `landing/` pushed, the script copies from it instead.
-- **In Netlify dashboard**: Leave **Base directory** blank. Build command and Publish directory are set in `netlify.toml`.
-- **Update GitHub link**: In `landing/index.html`, replace `https://github.com` with your repo URL (e.g. `https://github.com/CtrlAltDelegate/macro-dashboard`). In the Streamlit app, the footer link can be changed in `app.py` (search for `GitHub`).
+- **Landing page**: The `landing/` folder is a static site (HTML/CSS) deployable to Netlify. The live dashboard runs separately (local machine or Streamlit Community Cloud).
+- **Deploy to Netlify**: Connect the repo. `netlify.toml` runs `python scripts/build_landing.py` (writes the page into `public/`) and publishes `public/`. Leave **Base directory** blank in Netlify.
+- **Update GitHub link**: In `landing/index.html`, replace the placeholder GitHub URL with your repo URL. The footer link in the Streamlit app can be changed in `app.py` (search for `GitHub`).
+
+---
 
 ## License
 
