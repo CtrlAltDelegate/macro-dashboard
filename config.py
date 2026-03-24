@@ -132,18 +132,20 @@ FRED_DGS2 = "DGS2"           # 2-Year Treasury
 FRED_CORE_CPI = "CPILFESL"   # Core CPI (less food and energy)
 FRED_INITIAL_CLAIMS = "ICSA" # Initial Jobless Claims (weekly)
 
-# AI interpretation (optional): OpenAI for lightweight summary
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-if not OPENAI_API_KEY:
+# AI interpretation (optional): Anthropic Claude (CLAUDE_API_KEY or ANTHROPIC_API_KEY)
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
+if not CLAUDE_API_KEY:
     try:
         import streamlit as _st
         if hasattr(_st, "secrets"):
-            _ak = getattr(_st.secrets, "OPENAI_API_KEY", None)
-            if not _ak and "OPENAI_API_KEY" in _st.secrets:
-                _ak = _st.secrets["OPENAI_API_KEY"]
-            if not _ak and hasattr(_st.secrets, "openai"):
-                _ak = getattr(_st.secrets.openai, "OPENAI_API_KEY", None)
+            _ak = getattr(_st.secrets, "CLAUDE_API_KEY", None)
+            if not _ak and "CLAUDE_API_KEY" in _st.secrets:
+                _ak = _st.secrets["CLAUDE_API_KEY"]
+            if not _ak:
+                _ak = getattr(_st.secrets, "ANTHROPIC_API_KEY", None)
+            if not _ak and "ANTHROPIC_API_KEY" in _st.secrets:
+                _ak = _st.secrets["ANTHROPIC_API_KEY"]
             if _ak:
-                OPENAI_API_KEY = str(_ak)
+                CLAUDE_API_KEY = str(_ak)
     except Exception:
         pass

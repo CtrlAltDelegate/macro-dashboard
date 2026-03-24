@@ -139,20 +139,22 @@ def generate_ai_summary(
         if cached:
             return cached
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = os.getenv("CLAUDE_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         try:
             import streamlit as _st
             if hasattr(_st, "secrets"):
-                api_key = getattr(_st.secrets, "OPENAI_API_KEY", "") or ""
-                if not api_key and "OPENAI_API_KEY" in _st.secrets:
-                    api_key = str(_st.secrets["OPENAI_API_KEY"] or "")
-                if not api_key and hasattr(_st.secrets, "openai"):
-                    api_key = str(getattr(_st.secrets.openai, "OPENAI_API_KEY", "") or "")
+                api_key = getattr(_st.secrets, "CLAUDE_API_KEY", "") or ""
+                if not api_key and "CLAUDE_API_KEY" in _st.secrets:
+                    api_key = str(_st.secrets["CLAUDE_API_KEY"] or "")
+                if not api_key:
+                    api_key = getattr(_st.secrets, "ANTHROPIC_API_KEY", "") or ""
+                if not api_key and "ANTHROPIC_API_KEY" in _st.secrets:
+                    api_key = str(_st.secrets["ANTHROPIC_API_KEY"] or "")
         except Exception:
             pass
     if not api_key:
-        return None  # No key: caller can show "add OPENAI_API_KEY to Secrets"
+        return None
 
     # Build compact prompt
     signals_str = json.dumps(signals, indent=0)
@@ -178,15 +180,17 @@ Respond with exactly this JSON (no other text):
 }}"""
 
     try:
-        import openai
-        api = openai.OpenAI(api_key=api_key)
-        resp = api.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
+        import anthropic
+        model = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model=model,
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=0.3,
+            messages=[{"role": "user", "content": prompt}],
         )
-        content = (resp.choices[0].message.content or "").strip()
+        block = msg.content[0]
+        content = (getattr(block, "text", "") or "").strip()
         # Extract JSON (handle optional markdown code block)
         if "```" in content:
             start = content.find("{")
@@ -219,13 +223,17 @@ Respond with exactly this JSON (no other text):
 
 
 def ai_summary_available() -> bool:
-    """True if OPENAI_API_KEY is set and we can attempt to generate a summary."""
-    key = os.getenv("OPENAI_API_KEY", "")
-    if key:
+    """True if CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is set."""
+    if os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY"):
         return True
     try:
         import streamlit as _st
-        if hasattr(_st, "secrets") and getattr(_st.secrets, "get", lambda k: None)("OPENAI_API_KEY"):
+        if not hasattr(_st, "secrets"):
+            return False
+        s = _st.secrets
+        if getattr(s, "get", lambda k: None)("CLAUDE_API_KEY") or "CLAUDE_API_KEY" in s:
+            return True
+        if getattr(s, "get", lambda k: None)("ANTHROPIC_API_KEY") or "ANTHROPIC_API_KEY" in s:
             return True
     except Exception:
         pass

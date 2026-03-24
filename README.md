@@ -34,7 +34,7 @@ The dashboard is organized into four tabs:
 - **Macro lookback**: 1y, 3y, 5y, 10y, Max — applies to FRED data and rotation window.
 - **S&P 500 overlay** on Macro charts.
 - Individual toggles for yield curve lines, event markers, oil and BTC overlays.
-- **AI Interpretation** — AI-generated executive summary (requires OpenAI API key).
+- **AI Interpretation** — AI-generated executive summary (optional; requires `CLAUDE_API_KEY` or `ANTHROPIC_API_KEY`).
 - **Macro Drivers headlines** — 3–5 recent macro-relevant headlines from RSS feeds.
 - **Refresh data** button.
 
@@ -119,9 +119,9 @@ Or run `scripts\refresh.ps1` from the project root.
 | FRED (St. Louis Fed) | All macro data | Yes — free at fred.stlouisfed.org |
 | Yahoo Finance | Rotation charts (ETFs, BTC, ETH) | No |
 | RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) | Macro Drivers headlines | No |
-| OpenAI (optional) | AI interpretation summary | Yes — set `OPENAI_API_KEY` in `.env` |
+| Anthropic Claude (optional) | AI interpretation summary | Yes — set `CLAUDE_API_KEY` or `ANTHROPIC_API_KEY` in `.env` or Streamlit Secrets |
 
-AI interpretation uses **gpt-4o-mini** for low cost. Output is cached by report date and signal hash.
+Default model is **claude-haiku-4-5** (with fallbacks if a model ID is retired). Override with env `CLAUDE_MODEL`. Output is cached by report date and signal hash.
 
 ---
 

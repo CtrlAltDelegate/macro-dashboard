@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import streamlit as st
 
-# Streamlit Cloud: secrets in st.secrets; put FRED_API_KEY and OPENAI_API_KEY into env
+# Streamlit Cloud: secrets in st.secrets; FRED_API_KEY and CLAUDE_API_KEY (or ANTHROPIC_API_KEY)
 try:
     if hasattr(st, "secrets"):
         val = getattr(st.secrets, "get", lambda k: None)("FRED_API_KEY") or getattr(st.secrets, "FRED_API_KEY", None)
@@ -22,20 +22,22 @@ try:
             val = st.secrets["FRED_API_KEY"]
         if val:
             os.environ.setdefault("FRED_API_KEY", str(val))
-        ak = getattr(st.secrets, "OPENAI_API_KEY", None)
-        if not ak and "OPENAI_API_KEY" in st.secrets:
-            ak = st.secrets["OPENAI_API_KEY"]
-        if not ak and hasattr(st.secrets, "openai"):
-            ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
-        if ak:
-            os.environ.setdefault("OPENAI_API_KEY", str(ak))
+        ck = getattr(st.secrets, "CLAUDE_API_KEY", None)
+        if not ck and "CLAUDE_API_KEY" in st.secrets:
+            ck = st.secrets["CLAUDE_API_KEY"]
+        if not ck:
+            ck = getattr(st.secrets, "ANTHROPIC_API_KEY", None)
+        if not ck and "ANTHROPIC_API_KEY" in st.secrets:
+            ck = st.secrets["ANTHROPIC_API_KEY"]
+        if ck:
+            os.environ.setdefault("CLAUDE_API_KEY", str(ck))
 except Exception:
     pass
 
 import config
 
 # Server-side log: appears in Streamlit Cloud "Manage app" → Logs (not in browser console)
-print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}, OPENAI_API_KEY set: {bool(config.OPENAI_API_KEY)}")
+print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}, CLAUDE_API_KEY set: {bool(config.CLAUDE_API_KEY)}")
 
 from charts.build import (
     build_valuation_chart,
@@ -273,8 +275,8 @@ with st.sidebar:
     st.subheader("AI & News")
     enable_ai = st.checkbox(
         "Enable AI Interpretation",
-        value=bool(getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")),
-        help="Show AI-generated executive summary and interpretation. Requires OPENAI_API_KEY.",
+        value=bool(getattr(config, "CLAUDE_API_KEY", None) or os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")),
+        help="Show AI-generated executive summary (Anthropic Claude). Requires CLAUDE_API_KEY in Secrets or .env.",
     )
     include_macro_drivers = st.checkbox("Include Macro Drivers headlines", value=True, help="Show 3–5 recent macro-relevant headlines.")
     if st.button("Refresh data"):
@@ -498,24 +500,25 @@ if include_macro_drivers:
         _news = fetch_recent_macro_news(max_articles=12, max_age_days=7)
         macro_drivers_list = rank_macro_relevance(_news, max_return=5)
 
-# Sync OpenAI key from Streamlit secrets at runtime (Cloud often has secrets only per-request)
-def _ensure_openai_key():
-    if os.getenv("OPENAI_API_KEY"):
+def _ensure_claude_key():
+    if os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY"):
         return
     try:
         if hasattr(st, "secrets"):
-            ak = getattr(st.secrets, "OPENAI_API_KEY", None)
-            if not ak and "OPENAI_API_KEY" in st.secrets:
-                ak = st.secrets["OPENAI_API_KEY"]
-            if not ak and hasattr(st.secrets, "openai"):
-                ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
-            if ak:
-                os.environ["OPENAI_API_KEY"] = str(ak)
+            ck = getattr(st.secrets, "CLAUDE_API_KEY", None)
+            if not ck and "CLAUDE_API_KEY" in st.secrets:
+                ck = st.secrets["CLAUDE_API_KEY"]
+            if not ck:
+                ck = getattr(st.secrets, "ANTHROPIC_API_KEY", None)
+            if not ck and "ANTHROPIC_API_KEY" in st.secrets:
+                ck = st.secrets["ANTHROPIC_API_KEY"]
+            if ck:
+                os.environ["CLAUDE_API_KEY"] = str(ck)
     except Exception:
         pass
 
 if enable_ai:
-    _ensure_openai_key()
+    _ensure_claude_key()
     payload = build_macro_signal_payload(
         macro_risk_score=float(thermo_series.iloc[-1]) if not thermo_series.empty else None,
         macro_risk_zone=zone_label or None,
@@ -566,7 +569,7 @@ if enable_ai or include_macro_drivers:
         st.divider()
     elif enable_ai and not ai_result:
         st.caption(
-            "AI interpretation unavailable. Add **OPENAI_API_KEY** as a root-level key in Settings → Secrets (Streamlit Cloud) or in `.env` / `.streamlit/secrets.toml` (local), save, then **Reboot** the app. Charts and raw signals are still current."
+            "AI interpretation unavailable. Add **CLAUDE_API_KEY** in Settings → Secrets (Streamlit Cloud) or `CLAUDE_API_KEY` in `.env` / `.streamlit/secrets.toml` (local), save, then **Reboot** the app. Charts and raw signals are still current."
         )
     if macro_drivers_list:
         st.markdown("#### Macro Drivers")
