@@ -52,7 +52,7 @@ pip install -r requirements.txt
 
 ### 2. FRED API key (free)
 
-[Create one here](https://fred.stlouisfed.org/docs/api/api_key.html), then add it to a `.env` file (copy from `.env.example`):
+[Create one here](https://fred.stlouisfed.org/docs/api/api_key.html), then add it to a `.env` file in the project root (create the file if needed):
 
 ```env
 FRED_API_KEY=your_key_here
@@ -60,36 +60,49 @@ FRED_API_KEY=your_key_here
 
 Or set it as an environment variable directly.
 
+**Optional — AI interpretation (local):** add to `.env`:
+
+```env
+CLAUDE_API_KEY=your_anthropic_key
+```
+
+(`ANTHROPIC_API_KEY` is also accepted.) On **Streamlit Cloud**, add the same keys under **Settings → Secrets** (root-level, like `FRED_API_KEY`).
+
 ### 3. Run the dashboard
 
-From the project root (the folder containing `app.py`):
+From the **project root** (the folder containing `app.py`):
 
 ```bash
 streamlit run app.py
 ```
 
-Or from anywhere inside the repo:
+If `streamlit` is not on your PATH (common on Windows):
+
+```bash
+python -m streamlit run app.py
+```
+
+Or:
 
 ```bash
 python run_app.py
 ```
 
-Open the URL shown (e.g. `http://localhost:8501`). Each chart has an **Export chart as PNG** button.
+Open the URL shown (e.g. `http://localhost:8501`). Each chart has an **Export chart as PNG** button when data is available.
 
 ---
 
 ## Chart export (PNG)
 
-PNG export uses **Kaleido** (primary) with **Playwright** as a fallback.
+PNG export tries **Kaleido** first (`pip install -r requirements.txt` includes it), then **Playwright** if Kaleido fails.
 
-- Kaleido is installed via `pip install kaleido` (included in `requirements.txt`).
-- If Kaleido fails, install Playwright: `pip install playwright && playwright install chromium`.
+- **Playwright Chromium** (only if needed): `pip install playwright` then `python -m playwright install chromium` (use `python -m` on Windows if `playwright` is not on PATH).
 
 ---
 
 ## PDF report
 
-A **Download PDF report** button is available in the app. The PDF includes summary content and key metrics. For chart visuals, view them in the web dashboard and use the per-chart PNG export buttons.
+**Download PDF** generates a **summary brief** (header, Today’s Snapshot, Macro Radar when available, AI interpretation if enabled, Macro Drivers headlines, footer). **Chart images are not embedded** in the PDF so export always works without extra setup. For chart visuals, use the dashboard and **Export chart as PNG** on each chart.
 
 ---
 
@@ -104,9 +117,10 @@ python refresh.py 10y       # optional: 1y, 3y, 5y, 10y, Max
 
 Or run `scripts\refresh.ps1` from the project root.
 
-**Output:**
-- `exports\latest\` — four PNGs: `01_valuation_pressure_index.png`, `02_macro_risk_raw_roc.png`, `03_risk_thermostat.png`, `04_risk_cascade_rotation.png`
-- `exports\YYYY-MM-DD\` — same files, archived by date
+**Output** (eight PNGs per run, mirrored to `latest` and dated folder):
+
+- `01_global_liquidity.png` … `08_risk_cascade_rotation.png` (see `refresh.py` → `EXPORT_NAMES` for the full list)
+- `exports\latest\` and `exports\YYYY-MM-DD\`
 
 **Windows Task Scheduler (Tue/Fri 7:00 AM):** see [SCHEDULE.md](SCHEDULE.md) for step-by-step setup.
 
@@ -128,7 +142,7 @@ Default model is **claude-haiku-4-5** (with automatic fallbacks if a model ID is
 ## Troubleshooting
 
 **"Main module does not exist" / FileNotFoundError**
-Streamlit must run from the project root (the folder containing `app.py`). Use `cd macro-dashboard` then `streamlit run app.py`, or use `python run_app.py` which handles the `cd` automatically.
+Streamlit must run from the project root (the folder containing `app.py`). `cd` into the repo, then `streamlit run app.py`, `python -m streamlit run app.py`, or `python run_app.py`.
 
 **Streamlit Community Cloud — "directory … does not exist"**
 `app.py` is at the repo root — there is no `RiskCycle/` subfolder. In Streamlit Cloud → your app → **Settings**: set **Main file path** to `app.py`. Leave **App root** blank.
@@ -139,6 +153,9 @@ In **Settings → Secrets**, use a root-level key (no section header):
 FRED_API_KEY = "your_actual_key_here"
 ```
 Not under `[api]` or any other section. After saving, click **Reboot** the app.
+
+**AI shows “unavailable” on Cloud but works locally**  
+Add `CLAUDE_API_KEY` (or `ANTHROPIC_API_KEY`) to Secrets the same way as `FRED_API_KEY`, then reboot. Local runs need the key in `.env` or environment variables — Cloud secrets are not used on your PC.
 
 ---
 
