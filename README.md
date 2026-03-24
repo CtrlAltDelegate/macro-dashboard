@@ -121,7 +121,7 @@ Or run `scripts\refresh.ps1` from the project root.
 | RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) | Macro Drivers headlines | No |
 | Anthropic Claude (optional) | AI interpretation summary | Yes — set `CLAUDE_API_KEY` or `ANTHROPIC_API_KEY` in `.env` or Streamlit Secrets |
 
-Default model is **claude-haiku-4-5** (with fallbacks if a model ID is retired). Override with env `CLAUDE_MODEL`. Output is cached by report date and signal hash.
+Default model is **claude-haiku-4-5** (with automatic fallbacks if a model ID is retired). Override with env `CLAUDE_MODEL`. Output is cached by report date and signal hash.
 
 ---
 

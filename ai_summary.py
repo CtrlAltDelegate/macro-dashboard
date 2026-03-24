@@ -20,6 +20,18 @@ except ImportError:
 MAX_INPUT_TOKENS = 1800
 MAX_OUTPUT_TOKENS = 800
 
+# Anthropic retires dated model IDs; alias + fallbacks avoid 404 not_found_error
+DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"
+_MODEL_FALLBACKS = (
+    "claude-3-5-haiku-latest",
+    "claude-sonnet-4-20250514",
+)
+
+
+def _is_model_not_found(err: Exception) -> bool:
+    s = str(err).lower()
+    return "404" in str(err) or "not_found" in s or "not found" in s
+
 # Cache: key by (report_date, hash(signals + headlines))
 def _cache_key(signals: dict, news: list) -> str:
     raw = json.dumps({"s": signals, "n": [a.get("title", "") for a in news]}, sort_keys=True)
@@ -181,16 +193,34 @@ Respond with exactly this JSON (no other text):
 
     try:
         import anthropic
-        model = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
         client = anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model=model,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        block = msg.content[0]
-        content = (getattr(block, "text", "") or "").strip()
+        primary = (os.getenv("CLAUDE_MODEL") or DEFAULT_CLAUDE_MODEL).strip()
+        models_to_try = [primary]
+        for m in _MODEL_FALLBACKS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
+        content = ""
+        last_err: Exception | None = None
+        for model in models_to_try:
+            try:
+                msg = client.messages.create(
+                    model=model,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    temperature=0.3,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                block = msg.content[0]
+                content = (getattr(block, "text", "") or "").strip()
+                break
+            except Exception as e:
+                if _is_model_not_found(e):
+                    last_err = e
+                    continue
+                return {"_error": str(e)}
+        if not content:
+            return {"_error": str(last_err) if last_err else "No response from Claude"}
+
         # Extract JSON (handle optional markdown code block)
         if "```" in content:
             start = content.find("{")
