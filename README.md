@@ -161,6 +161,47 @@ Add `CLAUDE_API_KEY` (or `ANTHROPIC_API_KEY`) to Secrets the same way as `FRED_A
 
 ---
 
+## KFH integration API (SummitPIC)
+
+A separate FastAPI service (`api/`) implements the KFH Integration Spec so this dashboard
+can plug into the Family Office Dashboard: `GET /health`, `GET /api/summary`, `GET /api/alerts`
++ `PATCH /api/alerts/:id`, `GET/POST /api/regime`, `/api/regime/history`, `/api/regime/evaluate`,
+and full CRUD on `/api/signals` and `/api/indicators`. It runs independently of the Streamlit
+app (its own process/port) and shares this repo's FRED data/model code to auto-seed a starter
+set of macro signals (yield curve, credit spreads, NFCI, inflation, unemployment, GDP,
+liquidity) — regime posture is then computed from whatever signals are currently stored,
+auto-seeded or manually edited via the API.
+
+### Run it
+
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
+
+Interactive docs at `http://localhost:8000/docs`.
+
+### Environment variables
+
+```env
+# Database — defaults to a local SQLite file if unset. Point at Supabase (or any) Postgres for prod.
+DATABASE_URL=postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres
+
+# JWT verification — pick ONE mode. Leave both unset for local dev (unsigned decode; not safe past localhost).
+JWT_JWKS_URL=https://<issuer>/.well-known/jwks.json   # RS256, e.g. Clerk or Supabase Auth (asymmetric)
+JWT_SECRET=<shared-secret>                             # HS256, e.g. Supabase Auth's project JWT secret
+JWT_ISSUER=                                            # optional: verified if set
+JWT_AUDIENCE=                                          # optional: verified if set
+
+# CORS
+DASHBOARD_ORIGIN=https://your-summitpic-domain.example
+```
+
+`user_id` is read from the JWT's `sub` claim (standard across both Clerk and Supabase Auth),
+so switching issuers later is just an env var change.
+
+---
+
 ## GitHub + Netlify
 
 - **Landing page**: The `landing/` folder is a static site (HTML/CSS) deployable to Netlify. The live dashboard runs separately (local machine or Streamlit Community Cloud).
