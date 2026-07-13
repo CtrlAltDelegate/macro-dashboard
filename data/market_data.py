@@ -154,6 +154,29 @@ def fetch_bitcoin_data(
     return fetch_bitcoin_yfinance(period=yfinance_period)
 
 
+def fetch_index_history(ticker: str, period: str = "max", interval: str = "1d") -> pd.Series:
+    """Long-history daily close for an index ticker (e.g. ^GSPC, ^IXIC) via Yahoo Finance.
+    Used for algorithmic bear-market detection, which needs full history rather than the
+    lookback-limited FRED SP500 series."""
+    try:
+        data = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.Series(dtype=float)
+    if data.empty or "Close" not in data.columns:
+        return pd.Series(dtype=float)
+    close = data["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    return close.ffill().dropna()
+
+
 def fetch_rotation_ladder_data(period: str = "5y", interval: str = "1d") -> pd.DataFrame:
     """Fetch close prices for rotation ladder pairs (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT). Returns ratio columns."""
     pairs = getattr(config, "ROTATION_LADDER_PAIRS", [

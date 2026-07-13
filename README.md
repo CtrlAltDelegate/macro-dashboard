@@ -17,6 +17,7 @@ The dashboard is organized into four tabs:
 - **WTI Oil** — Spot price with optional YoY % and CPI overlay. Log scale toggle.
 - **Bitcoin** — Price with optional liquidity YoY and real yield (10Y TIPS) overlays. Log scale toggle.
 - **BTC Rainbow Bands** — Log-regression price channel with adjustable band width (σ).
+- **Bitcoin Cycle Regression Model** — Fits historical bear-market loss % and bull-market gain multiple across completed 4-year halving cycles (regression on cycles 1–3), then projects the current cycle: live drawdown from cycle top, projected bottom band, days elapsed vs. historical bear durations, and a divergence flag comparing the current cycle's actual bull-market multiple to the model (n=3 — scenario anchor, not a forecast).
 
 ### Regimes & Bands
 - **SPX Regime Bands** — S&P 500 regime overlays with optional log scale.
@@ -24,6 +25,7 @@ The dashboard is organized into four tabs:
 - **Credit Spreads** — ICE BofA US HY OAS.
 - **Rotation Ladder** — Z-score normalized ratios: ETH/BTC → BTC/SPX → SPX/Gold → Gold/Bonds. Detects rotation order from risk-on to defensive.
 - **Risk Cascade Curves** — Relative strength ratios: ALT/BTC, BTC/SPY, IWM/SPY, HYG/IEF, XLU/SPY.
+- **Historical Bear Markets (S&P 500 / NASDAQ)** — Algorithmic peak-to-trough drawdown detection (≥20%) over full price history, shown as a descriptive reference (shaded chart + table of past bear markets' depth/duration) alongside the current drawdown from all-time high. Unlike the BTC cycle model, this is **not** a regression or projection — equities lack a halving-equivalent fixed cadence, so past bear markets are shown as-is rather than extrapolated.
 
 ### Fiscal
 - **Deficit % GDP** — Federal surplus/deficit as % of GDP.

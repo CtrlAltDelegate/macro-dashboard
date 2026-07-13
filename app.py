@@ -57,6 +57,9 @@ from charts.build import (
     build_deficit_pct_gdp_chart,
     build_debt_to_gdp_chart,
     build_interest_burden_chart,
+    build_btc_cycle_loss_chart,
+    build_btc_cycle_multiple_chart,
+    build_equity_drawdown_chart,
 )
 from data import (
     fetch_valuation_data,
@@ -69,10 +72,13 @@ from data import (
     fetch_real_yield_data,
     fetch_fiscal_data,
     fetch_model_input_series,
+    fetch_index_history,
 )
 from data.market_data import fetch_rotation_ladder_data
 from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_regime_curves
 from models.btc_metrics import compute_btc_snapshot
+from models.btc_cycle_regression import compute_cycle_snapshot, cycle_history_table
+from models.equity_cycle_reference import detect_bear_markets, current_drawdown_snapshot
 
 try:
     from pdf_report import build_dashboard_pdf, pdf_available
@@ -328,6 +334,19 @@ def load_all(lookback: str):
             pass
     return val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series
 
+
+@st.cache_data(ttl=86400)
+def load_equity_cycle_history():
+    """Long-history (period='max') daily close for S&P 500 / NASDAQ, for bear-market
+    detection. Cached separately (daily TTL) since it doesn't depend on lookback."""
+    out = {}
+    for label, ticker in config.EQUITY_CYCLE_TICKERS.items():
+        try:
+            out[label] = fetch_index_history(ticker, period="max")
+        except Exception:
+            out[label] = pd.Series(dtype=float)
+    return out
+
 try:
     val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series = load_all(lookback)
 except Exception as e:
@@ -364,6 +383,16 @@ if not liquidity_df.empty and "WALCL" in liquidity_df.columns and len(liquidity_
 cpi_series = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else None
 # BTC snapshot (WMAs, ROC, distances, Balanced/Terminal); terminal_k from sidebar
 btc_snapshot = compute_btc_snapshot(btc_series, terminal_k=btc_rainbow_k) if btc_series is not None and not btc_series.empty else {}
+# BTC cycle regression: live price vs. projected bottom band, days elapsed, bull-gain divergence
+btc_cycle_snapshot = compute_cycle_snapshot(btc_snapshot.get("price")) if btc_snapshot and btc_snapshot.get("price") is not None else {}
+btc_cycle_history = cycle_history_table()
+# Equity bear-market reference (S&P 500 / NASDAQ): long history, algorithmic drawdown detection
+try:
+    equity_cycle_series = load_equity_cycle_history()
+except Exception:
+    equity_cycle_series = {}
+equity_bear_events = {label: detect_bear_markets(s, threshold=config.BEAR_MARKET_THRESHOLD) for label, s in equity_cycle_series.items()}
+equity_drawdown_snapshot = {label: current_drawdown_snapshot(s) for label, s in equity_cycle_series.items()}
 # Oil snapshot (current WTI, 4W ROC, 52W ROC)
 oil_snapshot = {}
 if not oil_df.empty and "DCOILWTICO" in oil_df.columns:
@@ -1048,6 +1077,56 @@ with tab_markets:
     else:
         st.info("Not enough BTC history for Rainbow (need 30+ points).")
 
+    st.header("Bitcoin Cycle Regression Model")
+    st.markdown(
+        '<p class="section-desc">Fits the historical pattern of BTC bear-market losses and bull-market gains '
+        'across completed 4-year halving cycles, then projects the current cycle using those fits. '
+        '<strong>n=3 completed cycles — treat as a scenario anchor, not a forecast.</strong></p>',
+        unsafe_allow_html=True,
+    )
+    if btc_cycle_snapshot:
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            dd = btc_cycle_snapshot.get("drawdown_from_top_pct")
+            st.metric("Drawdown from cycle top", f"{dd:.1f}%" if dd is not None else "—", f"Top: ${btc_cycle_snapshot.get('top_price', 0):,.0f}")
+        with cc2:
+            lo = btc_cycle_snapshot.get("projected_bottom_low")
+            hi = btc_cycle_snapshot.get("projected_bottom_high")
+            st.metric("Model 1: projected bottom (band)", f"${lo:,.0f}–${hi:,.0f}" if lo is not None and hi is not None else "—", "±1σ, Model 1")
+        with cc3:
+            days = btc_cycle_snapshot.get("days_since_top")
+            dmin = btc_cycle_snapshot.get("historical_bear_duration_min_days")
+            dmax = btc_cycle_snapshot.get("historical_bear_duration_max_days")
+            hist_str = f"Historical range: {dmin}–{dmax}d" if dmin is not None else ""
+            st.metric("Days since cycle top", f"{days:,}" if days is not None else "—", hist_str)
+        with cc4:
+            div = btc_cycle_snapshot.get("bull_divergence_pct")
+            actual_m = btc_cycle_snapshot.get("bull_actual_multiple")
+            st.metric("Model 2: bull-gain divergence", f"{div:+.0f}%" if div is not None else "—", f"Actual {actual_m:.1f}x vs. model" if actual_m is not None else "")
+        st.caption(
+            "Model 1 (bear loss): linear regression on cycles 1–3 loss %. "
+            "Model 2 (bull gain): log-linear regression on cycles 1–3 multiple (bottom→top is multiplicative, not additive). "
+            "Cycle 4's actual bull multiple diverged well above the Model 2 projection — plausibly a structurally "
+            "different buyer base (spot ETF inflows since Jan 2024) rather than a pure retail speculative cycle."
+        )
+    else:
+        st.info("Need current BTC price for the cycle tracker.")
+
+    fig_btc_cycle_loss = build_btc_cycle_loss_chart(
+        btc_cycle_history, btc_cycle_snapshot.get("bear_model", {}), btc_cycle_snapshot.get("cycle_number", 4)
+    )
+    if fig_btc_cycle_loss is not None:
+        st.plotly_chart(fig_btc_cycle_loss, width="stretch", key="btc_cycle_loss")
+
+    fig_btc_cycle_multiple = build_btc_cycle_multiple_chart(
+        btc_cycle_history,
+        btc_cycle_snapshot.get("bull_model", {}),
+        btc_cycle_snapshot.get("cycle_number", 4),
+        actual_current_multiple=btc_cycle_snapshot.get("bull_actual_multiple"),
+    )
+    if fig_btc_cycle_multiple is not None:
+        st.plotly_chart(fig_btc_cycle_multiple, width="stretch", key="btc_cycle_multiple")
+
 with tab_regimes:
     st.markdown("#### Model Inputs")
     _spread_series = yield_df["DGS10"].sub(yield_df["DGS3MO"]).dropna() if not yield_df.empty and "DGS10" in yield_df.columns and "DGS3MO" in yield_df.columns else pd.Series(dtype=float)
@@ -1128,6 +1207,47 @@ with tab_regimes:
             st.plotly_chart(fig_bands_oil, width="stretch", key="bands_oil")
     else:
         st.info("Need oil and risk data for bands.")
+
+    st.subheader("Historical Bear Markets — S&P 500 / NASDAQ")
+    st.markdown(
+        '<p class="section-desc">Descriptive reference, not a forecast: unlike Bitcoin\'s halving-driven 4-year cycle, '
+        'equity bear markets have no fixed structural cadence (past declines have run from ~1 month to ~30 months), '
+        'so this shows what past drawdowns actually looked like rather than projecting a bottom.</p>',
+        unsafe_allow_html=True,
+    )
+    for label in config.EQUITY_CYCLE_TICKERS:
+        series = equity_cycle_series.get(label, pd.Series(dtype=float))
+        events = equity_bear_events.get(label, pd.DataFrame())
+        snap = equity_drawdown_snapshot.get(label, {})
+        if series.empty:
+            st.info(f"Could not load history for {label}.")
+            continue
+        st.markdown(f"**{label}**")
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            dd = snap.get("drawdown_pct")
+            st.metric("Drawdown from all-time high", f"{dd:.1f}%" if dd is not None else "—", "Bear market" if snap.get("is_bear_market") else "")
+        with e2:
+            ath = snap.get("ath_price")
+            ath_date = snap.get("ath_date")
+            st.metric("All-time high", f"{ath:,.0f}" if ath is not None else "—", ath_date.strftime("%Y-%m-%d") if ath_date is not None else "")
+        with e3:
+            n_events = len(events) if events is not None else 0
+            st.metric("Bear markets on record (≥20%)", f"{n_events}", "since full history")
+        fig_drawdown = build_equity_drawdown_chart(series, events, f"{label} — Price with Historical Bear Markets Shaded")
+        if fig_drawdown is not None:
+            st.plotly_chart(fig_drawdown, width="stretch", key=f"drawdown_{label}")
+        if events is not None and not events.empty:
+            disp = events.copy()
+            disp["peak_date"] = pd.to_datetime(disp["peak_date"]).dt.strftime("%Y-%m-%d")
+            disp["trough_date"] = pd.to_datetime(disp["trough_date"]).dt.strftime("%Y-%m-%d")
+            disp["recovery_date"] = pd.to_datetime(disp["recovery_date"]).dt.strftime("%Y-%m-%d")
+            disp["loss_pct"] = disp["loss_pct"].map(lambda v: f"{v:.1f}%")
+            disp["decline_days"] = disp["decline_days"].map(lambda v: f"{v:,}")
+            disp = disp[["peak_date", "trough_date", "loss_pct", "decline_days", "recovery_date", "in_progress"]]
+            disp.columns = ["Peak", "Trough", "Loss %", "Decline (days)", "Recovered", "In progress"]
+            st.dataframe(disp, width="stretch", hide_index=True)
+        st.divider()
 
     st.subheader(last_chart_header)
     st.markdown(f'<p class="section-desc">{last_chart_desc}</p>', unsafe_allow_html=True)

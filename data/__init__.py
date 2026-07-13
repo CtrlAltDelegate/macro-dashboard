@@ -10,7 +10,7 @@ from .fred_data import (
     fetch_fiscal_data,
     fetch_model_input_series,
 )
-from .market_data import fetch_rotation_data, fetch_bitcoin_yfinance, fetch_bitcoin_data
+from .market_data import fetch_rotation_data, fetch_bitcoin_yfinance, fetch_bitcoin_data, fetch_index_history
 
 __all__ = [
     "fetch_fred_series",
@@ -26,4 +26,5 @@ __all__ = [
     "fetch_rotation_data",
     "fetch_bitcoin_yfinance",
     "fetch_bitcoin_data",
+    "fetch_index_history",
 ]

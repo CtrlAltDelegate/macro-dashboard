@@ -116,6 +116,13 @@ ROTATION_LADDER_PAIRS = [
     ("GLD", "TLT"),          # Gold/Bonds
 ]
 
+# Equity bear-market reference (Regimes & Bands tab) — long-history index tickers (Yahoo Finance)
+EQUITY_CYCLE_TICKERS = {
+    "S&P 500": "^GSPC",
+    "NASDAQ Composite": "^IXIC",
+}
+BEAR_MARKET_THRESHOLD = 0.20  # 20%+ peak-to-trough decline
+
 # Fiscal tab — deficit, debt, interest burden
 # FYFSGDA188S = Federal Surplus or Deficit [-] as % of GDP (annual; deficit negative → use -series for Deficit % GDP)
 # FYGFDPUN = Federal Debt as Percent of GDP (annual)
