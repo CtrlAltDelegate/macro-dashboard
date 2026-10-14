@@ -18,7 +18,9 @@ def compute_valuation_pressure_index(df: pd.DataFrame) -> pd.Series:
     """
     Compute valuation pressure from DataFrame with columns:
     SP500, UNRATE, INFLATION (e.g. CPIAUCSL), FEDFUNDS, M2 (e.g. M2SL).
+    Mixed frequencies are aligned by forward-filling each series onto the common index.
     """
+    df = df.ffill()
     spx = df["SP500"]
     unr = df["UNRATE"]
     inf = df["INFLATION"]

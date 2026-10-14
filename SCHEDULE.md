@@ -5,9 +5,9 @@ Tue/Fri **7:00 AM local time**: re-fetch FRED + market data, recompute charts, e
 ## One-time setup
 
 1. **Ensure refresh works manually**
-   - Open PowerShell, go to project root: `cd "C:\Users\...\RiskCycle"`.
+   - Open PowerShell, go to project root: `cd "C:\Users\...\macro-dashboard"`.
    - Run: `python refresh.py` (or `.\scripts\refresh.ps1`).
-   - Check that `exports\latest\` contains the four PNGs.
+   - Check that `exports\latest\` contains the nine PNGs.
 
 2. **Create the scheduled task**
 
@@ -35,13 +35,13 @@ Tue/Fri **7:00 AM local time**: re-fetch FRED + market data, recompute charts, e
      ```
    - Add arguments:
      ```text
-     -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<You>\OneDrive\Desktop\Projects\RiskCycle\scripts\refresh.ps1"
+     -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<You>\OneDrive\Desktop\Projects\macro-dashboard\scripts\refresh.ps1"
      ```
-     (Replace `<You>` with your Windows username, or use the full path to `RiskCycle`.)
+     (Replace `<You>` with your Windows username, or use the full path to `macro-dashboard`.)
 
    - Start in (optional but recommended):
      ```text
-     C:\Users\<You>\OneDrive\Desktop\Projects\RiskCycle
+     C:\Users\<You>\OneDrive\Desktop\Projects\macro-dashboard
      ```
    - OK.
 
@@ -61,16 +61,16 @@ Tue/Fri **7:00 AM local time**: re-fetch FRED + market data, recompute charts, e
 
 If you prefer a batch file as the task action:
 
-- Program/script: `C:\Users\<You>\OneDrive\Desktop\Projects\RiskCycle\scripts\run_refresh.bat`
+- Program/script: `C:\Users\<You>\OneDrive\Desktop\Projects\macro-dashboard\scripts\run_refresh.bat`
 - Add arguments: (leave empty)
-- Start in: `C:\Users\<You>\OneDrive\Desktop\Projects\RiskCycle`
+- Start in: `C:\Users\<You>\OneDrive\Desktop\Projects\macro-dashboard`
 
 ## Output locations
 
 | Path | Contents |
 |------|----------|
-| `exports\latest\` | Latest run: `01_valuation_pressure_index.png`, `02_macro_risk_raw_roc.png`, `03_risk_thermostat.png`, `04_risk_cascade_rotation.png` |
-| `exports\YYYY-MM-DD\` | Same four files, dated for that run (e.g. `2026-02-28`) |
+| `exports\latest\` | Latest run: `01_global_liquidity.png` through `09_net_liquidity.png` (see `EXPORT_NAMES` in `refresh.py`) |
+| `exports\YYYY-MM-DD\` | Same nine files, dated for that run (e.g. `2026-02-28`) |
 
 ## Changing the schedule
 

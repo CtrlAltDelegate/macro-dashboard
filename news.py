@@ -19,11 +19,15 @@ MACRO_RSS_FEEDS = [
 ]
 
 # Keywords that suggest macro relevance (Fed, rates, inflation, labor, etc.)
+# Specific macro terms only: bare words like "bank", "debt" or "credit" matched company news
+# (e.g. a bank's earnings or a personal-finance column).
 MACRO_KEYWORDS = re.compile(
-    r"\b(fed|federal reserve|interest rate|inflation|cpi|employment|unemployment|"
-    r"jobless|jobs report|gdp|recession|treasury|debt|deficit|"
-    r"oil|energy|crude|opec|credit|bank|ecb|central bank|"
-    r"monetary|fiscal|stimulus|taper|qt|qe)\b",
+    r"\b(fed|federal reserve|fomc|powell|interest rates?|rate (?:cut|hike)s?|inflation|cpi|pce|"
+    r"unemployment|jobless|jobs report|payrolls|labor market|gdp|recession|economy|economic|"
+    r"treasur(?:y|ies) (?:yields?|market)|bond (?:yields?|market)|yield curve|"
+    r"national debt|debt ceiling|budget deficit|fiscal|stimulus|tariffs?|trade war|"
+    r"crude|oil prices?|opec|ecb|central banks?|monetary policy|quantitative (?:easing|tightening)|"
+    r"retail sales|consumer spending|housing starts|credit spreads?|dollar)\b",
     re.I,
 )
 
@@ -86,7 +90,9 @@ def fetch_recent_macro_news(
             summary = _snippet(desc)
             pub = _parse_date(entry)
             # Prefer macro-relevant
-            score = 1 if MACRO_KEYWORDS.search(title + " " + summary) else 0
+            if not MACRO_KEYWORDS.search(title + " " + summary):
+                continue
+            score = 2 if MACRO_KEYWORDS.search(title) else 1  # macro term in the headline itself ranks first
             # Recency: newer = better
             if pub and pub.tzinfo:
                 from datetime import timezone

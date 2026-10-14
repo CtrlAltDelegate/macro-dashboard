@@ -25,11 +25,15 @@ TITLE_SIZE = 16
 def apply_theme(fig: go.Figure, title: str, height: int = 420) -> go.Figure:
     """Apply minimal institutional theme; good for PNG export and mobile."""
     fig.update_layout(
-        title=dict(text=title, font=dict(size=TITLE_SIZE, color=TEXT), x=0.02, xanchor="left"),
+        # Title pinned to the top of the figure; the legend gets its own row between title and plot
+        title=dict(
+            text=title, font=dict(size=TITLE_SIZE, color=TEXT),
+            x=0.02, xanchor="left", y=0.98, yanchor="top", yref="container",
+        ),
         paper_bgcolor=BACKGROUND,
         plot_bgcolor=BACKGROUND,
         font=dict(family=FONT_FAMILY, size=FONT_SIZE, color=TEXT),
-        margin=dict(l=56, r=32, t=48, b=48),
+        margin=dict(l=56, r=32, t=84, b=48),
         height=height,
         hovermode="x unified",
         showlegend=True,

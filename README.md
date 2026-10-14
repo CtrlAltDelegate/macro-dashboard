@@ -4,18 +4,21 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 
 ## Features
 
-- **Chart 1 — Valuation Pressure Index**  
-  `((SPX/UNRATE²) × INFLATION × FEDFUNDS) / M2`  
-  Rising = macro tightening; falling = easing.
+Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headlines and a one-page PDF summary.
 
-- **Chart 2 — Macro Risk Dashboard**  
-  Raw standardized composite + ROC (acceleration). Pillars: GDP, unemployment, inflation, NFCI, Fed liquidity, HY spread.
+- **Macro (Core)** — model-input cards (current value + 1Y change) and seven charts:
+  1. Global Liquidity — Fed balance sheet (WALCL) YoY %, plus **net liquidity** (WALCL − Treasury General Account − reverse repo)
+  2. Stock Market Pressure — `((SPX/UNRATE²) × CPI × FEDFUNDS) / M2`, rebased to 100
+  3. Economic Risk Index — average of six pillar z-scores (3-year window), each oriented so higher = worse: real GDP growth, 1-year change in unemployment, CPI inflation, NFCI, Fed balance-sheet growth and HY spread; plus its 1-month ROC. Computed with 5 years of extra history so the start of every lookback is warmed up
+  4. Yield Curve (10Y – 3M and 10Y – 2Y) + 90-day momentum
+  5. Financial Conditions (Chicago Fed NFCI)
+  6. Credit Spreads (ICE BofA HY OAS)
+  7. Market Risk Level (0–100) — 1-year rolling percentile of the risk composite, in six zones (Very Low → Extreme) shared by every tab
 
-- **Chart 3 — Risk Thermostat (0–100)**  
-  Allocation guide: Risk-on → Neutral → De-risk → Defensive → Capital preservation.
-
-- **Chart 4 — Risk Cascade Curves**  
-  Relative strength ratios (ALT/BTC, BTC/SPY, IWM/SPY, HYG/IEF, XLU/SPY) to detect rotation order.
+  Time-series charts shade NBER recessions (FRED `USREC`; NBER announces dates with a lag).
+- **Markets** — WTI oil (optional YoY / CPI YoY overlay), Bitcoin (optional liquidity / real-yield overlays), BTC weekly WMAs and a log-regression "rainbow". BTC metrics use full history; charts follow the lookback.
+- **Regimes & Bands** — S&P 500, BTC and oil shaded by Market Risk Level zone, plus the **Rotation Ladder** (z-scored ETH/BTC → BTC/SPY → SPY/GLD → GLD/TLT), or a FRED-only regime chart when Yahoo is unavailable.
+- **Fiscal** — deficit % GDP, debt-to-GDP, net interest % GDP.
 
 ## Setup
 
@@ -44,9 +47,9 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 
    Or run `python run_app.py` from anywhere inside the repo—it switches to the project root first.
 
-   Open the URL shown (e.g. http://localhost:8501). Use **Refresh data** in the sidebar to refetch; each chart has an **Export chart as PNG** button.
+   Open the URL shown (e.g. http://localhost:8501). Use **Refresh data** in the sidebar to refetch. Core charts have an **Export PNG** button (rendered on click via Kaleido, then **Download PNG**).
 
-4. **Macro lookback** (sidebar): choose **1y**, **3y**, **5y**, **10y**, or **Max**; it applies to FRED data and rotation window.
+4. **Macro lookback** (sidebar): choose **1y**, **3y**, **5y**, **10y**, or **Max**; it applies to FRED data, the Rotation Ladder and chart display windows.
 
 ## Headless refresh (Tue/Fri export)
 
@@ -59,15 +62,17 @@ python refresh.py 10y       # optional: 1y, 3y, 5y, 10y, Max
 
 Or run `scripts\refresh.ps1` from the project root. Output:
 
-- **exports\\latest\\** — four PNGs: `01_valuation_pressure_index.png`, `02_macro_risk_raw_roc.png`, `03_risk_thermostat.png`, `04_risk_cascade_rotation.png`
+- **exports\\latest\\** — nine PNGs, `01_global_liquidity.png` … `09_net_liquidity.png` (see `EXPORT_NAMES` in `refresh.py`)
 - **exports\\YYYY-MM-DD\\** — same files, dated for that run
+
+The script exits with code 1 if no PNG could be written (e.g. missing FRED key or Kaleido), so Task Scheduler shows the failure.
 
 **Windows Task Scheduler (Tue/Fri 7:00 AM):** see **[SCHEDULE.md](SCHEDULE.md)** for step-by-step setup.
 
 ## Data
 
 - **Macro**: FRED (St. Louis Fed) — free with API key.
-- **Rotation (Chart 4)**: Yahoo Finance — no key required.
+- **Rotation Ladder / BTC fallback**: Yahoo Finance — no key required.
 - **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
 - **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash.
 
@@ -91,7 +96,7 @@ Or run `scripts\refresh.ps1` from the project root. Output:
 - **Landing page**: The `landing/` folder is a static site (HTML/CSS) you can deploy to **Netlify**. Netlify hosts static files only—the live dashboard runs on your machine (or [Streamlit Community Cloud](https://share.streamlit.io/) if you host it there).
 - **Deploy to Netlify**: Connect the repo; the repo’s `netlify.toml` runs `python scripts/build_landing.py` (writes the landing page into `public/`) and publishes **public**. No need for a `landing` folder in the repo—the build script embeds the page. If you have `landing/` pushed, the script copies from it instead.
 - **In Netlify dashboard**: Leave **Base directory** blank. Build command and Publish directory are set in `netlify.toml`.
-- **Update GitHub link**: In `landing/index.html`, replace `https://github.com` with your repo URL (e.g. `https://github.com/CtrlAltDelegate/macro-dashboard`). In the Streamlit app, the footer link can be changed in `app.py` (search for `GitHub`).
+- **GitHub link**: `landing/index.html` and the app footer (`app.py`, search for `GitHub`) point to `https://github.com/CtrlAltDelegate/macro-dashboard`; change both if you fork.
 
 ## License
 

@@ -39,27 +39,31 @@ def lookback_to_observation_start(lookback: str) -> str | None:
     return start.isoformat()
 
 
-def lookback_to_rotation_period(lookback: str) -> str:
-    """Map lookback to Yahoo Finance period for rotation data (e.g. 1y, 2y, max)."""
-    if lookback == "Max":
-        return "10y"  # yfinance typical max for daily
-    return lookback
+# ---------------------------------------------------------------------------
+# Secrets: environment / .env first, then Streamlit secrets (root key or [section])
+# ---------------------------------------------------------------------------
+def get_secret(name: str) -> str:
+    """Return a secret from the environment, else st.secrets (root-level or any section). '' if unset."""
+    val = os.getenv(name, "")
+    if val:
+        return val
+    try:
+        import streamlit as st
+
+        if name in st.secrets:
+            return str(st.secrets[name] or "")
+        for section in st.secrets.values():
+            if hasattr(section, "get") and section.get(name):
+                return str(section.get(name))
+    except Exception:
+        pass  # no Streamlit, or no secrets.toml
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # FRED API (free key: https://fred.stlouisfed.org/docs/api/api_key.html)
 # ---------------------------------------------------------------------------
-FRED_API_KEY = os.getenv("FRED_API_KEY", "")
-if not FRED_API_KEY:
-    try:
-        import streamlit as _st
-        if hasattr(_st, "secrets"):
-            _val = getattr(_st.secrets, "get", lambda k: None)("FRED_API_KEY")
-            if not _val and "FRED_API_KEY" in _st.secrets:
-                _val = _st.secrets["FRED_API_KEY"]
-            if _val:
-                FRED_API_KEY = str(_val)
-    except Exception:
-        pass
+FRED_API_KEY = get_secret("FRED_API_KEY")
 
 # Chart 1 — Valuation Pressure Index
 FRED_VALUATION = {
@@ -80,33 +84,28 @@ FRED_MACRO_RISK = {
     "CREDIT_STRESS": "BAMLH0A0HYM2",   # ICE BofA US HY OAS
 }
 
-# Chart 3 — Yield curve (10Y – 3M spread)
+# Chart 3 — Yield curve (10Y – 3M spread, plus 10Y – 2Y)
 FRED_YIELD_CURVE = {
     "DGS10": "DGS10",     # 10-Year Treasury Constant Maturity Rate
     "DGS3MO": "DGS3MO",   # 3-Month Treasury Constant Maturity Rate
+    "T10Y2Y": "T10Y2Y",   # 10-Year minus 2-Year Treasury spread (percentage points)
 }
 
-# Chart 4 — Global Liquidity (Fed balance sheet YoY)
+# Chart 4 — Global Liquidity (Fed balance sheet YoY) + Net liquidity
 FRED_LIQUIDITY = {
-    "WALCL": "WALCL",     # Fed total assets (balance sheet)
+    "WALCL": "WALCL",     # Fed total assets (balance sheet), weekly, millions USD
+    "TGA": "WTREGEN",     # Treasury General Account, weekly, millions USD
+    "RRP": "RRPONTSYD",   # Overnight reverse repo, daily, billions USD
 }
+
+# NBER recession indicator (monthly, 1 = recession) for chart shading
+FRED_RECESSION = "USREC"
 
 # Markets tab — Oil (FRED), Bitcoin (FRED then yfinance fallback)
 FRED_OIL = "DCOILWTICO"   # WTI spot oil
 FRED_BTC = "CBBTCUSD"     # Coinbase BTC/USD (FRED)
 FRED_CPI = "CPIAUCSL"     # CPI (for oil overlay; also in FRED_MACRO_RISK as INFLATION)
 FRED_REAL_YIELD = "DFII10"  # 10-Year TIPS yield (real yields for BTC overlay)
-
-# Chart 6 — Rotation (Yahoo Finance tickers; FRED has limited ETF/crypto)
-ROTATION_PAIRS = [
-    ("ALT", "BTC-USD"),   # Alts vs Bitcoin (use ETH-USD or a basket as ALT proxy)
-    ("BTC-USD", "SPY"),   # Bitcoin vs S&P 500
-    ("IWM", "SPY"),       # Small cap vs large cap
-    ("HYG", "IEF"),       # High yield vs 7–10Y Treasuries
-    ("XLU", "SPY"),       # Utilities (defensive) vs S&P 500
-]
-# If no ALT ticker, we use ETH-USD as first “risk” asset
-ROTATION_ALT_TICKER = "ETH-USD"
 
 # Tab 3 — Rotation ladder (z-score normalized ratios). Order: risk-on → defensive.
 ROTATION_LADDER_PAIRS = [
@@ -133,17 +132,4 @@ FRED_CORE_CPI = "CPILFESL"   # Core CPI (less food and energy)
 FRED_INITIAL_CLAIMS = "ICSA" # Initial Jobless Claims (weekly)
 
 # AI interpretation (optional): OpenAI for lightweight summary
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-if not OPENAI_API_KEY:
-    try:
-        import streamlit as _st
-        if hasattr(_st, "secrets"):
-            _ak = getattr(_st.secrets, "OPENAI_API_KEY", None)
-            if not _ak and "OPENAI_API_KEY" in _st.secrets:
-                _ak = _st.secrets["OPENAI_API_KEY"]
-            if not _ak and hasattr(_st.secrets, "openai"):
-                _ak = getattr(_st.secrets.openai, "OPENAI_API_KEY", None)
-            if _ak:
-                OPENAI_API_KEY = str(_ak)
-    except Exception:
-        pass
+OPENAI_API_KEY = get_secret("OPENAI_API_KEY")

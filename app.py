@@ -3,36 +3,17 @@ Macro Dashboard — Private, local-first. Run: streamlit run app.py
 """
 from __future__ import annotations
 
-import io
-import os
 from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 from dotenv import load_dotenv
 
 load_dotenv()
 import streamlit as st
 
-# Streamlit Cloud: secrets in st.secrets; put FRED_API_KEY and OPENAI_API_KEY into env
-try:
-    if hasattr(st, "secrets"):
-        val = getattr(st.secrets, "get", lambda k: None)("FRED_API_KEY") or getattr(st.secrets, "FRED_API_KEY", None)
-        if not val and "FRED_API_KEY" in st.secrets:
-            val = st.secrets["FRED_API_KEY"]
-        if val:
-            os.environ.setdefault("FRED_API_KEY", str(val))
-        ak = getattr(st.secrets, "OPENAI_API_KEY", None)
-        if not ak and "OPENAI_API_KEY" in st.secrets:
-            ak = st.secrets["OPENAI_API_KEY"]
-        if not ak and hasattr(st.secrets, "openai"):
-            ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
-        if ak:
-            os.environ.setdefault("OPENAI_API_KEY", str(ak))
-except Exception:
-    pass
-
-import config
+import config  # reads FRED/OpenAI keys from env, .env, or Streamlit Secrets
 
 # Server-side log: appears in Streamlit Cloud "Manage app" → Logs (not in browser console)
 print(f"[Macro Dashboard] FRED_API_KEY set: {bool(config.FRED_API_KEY)}, OPENAI_API_KEY set: {bool(config.OPENAI_API_KEY)}")
@@ -42,6 +23,7 @@ from charts.build import (
     build_macro_risk_chart,
     build_yield_curve_chart,
     build_liquidity_chart,
+    build_net_liquidity_chart,
     build_fci_chart,
     build_credit_spreads_chart,
     build_thermostat_chart,
@@ -55,21 +37,30 @@ from charts.build import (
     build_deficit_pct_gdp_chart,
     build_debt_to_gdp_chart,
     build_interest_burden_chart,
+    add_recession_shading,
 )
 from data import (
     fetch_valuation_data,
     fetch_macro_risk_data,
     fetch_yield_curve_data,
     fetch_liquidity_data,
-    fetch_rotation_data,
+    fetch_rotation_ladder_data,
     fetch_oil_data,
     fetch_bitcoin_data,
     fetch_real_yield_data,
     fetch_fiscal_data,
     fetch_model_input_series,
+    fetch_recession_periods,
 )
-from data.market_data import fetch_rotation_ladder_data
-from models import compute_macro_risk_composite, compute_risk_thermostat, prepare_regime_curves
+from models import (
+    compute_risk_model,
+    compute_net_liquidity,
+    warmup_start,
+    risk_zone,
+    prepare_regime_curves,
+    change_over,
+    latest_change,
+)
 from models.btc_metrics import compute_btc_snapshot
 
 try:
@@ -96,9 +87,25 @@ except ImportError:
         return None, "plotly_export not available"
 
 
-def _try_export_png(fig):
-    """Export Plotly figure to PNG via Playwright (no Kaleido). Returns (bytes, None) or (None, error_msg)."""
-    return export_plotly_to_png_or_error(fig, width=800, height=450)
+@st.cache_data(show_spinner=False, max_entries=64)
+def _png_from_json(fig_json: str) -> tuple[bytes | None, str | None]:
+    """Render a figure (passed as JSON so it hashes cheaply) to PNG. Cached so unchanged charts aren't re-exported."""
+    return export_plotly_to_png_or_error(pio.from_json(fig_json), width=800, height=450)
+
+
+def _png_export(fig, file_name: str, key: str) -> None:
+    """'Export PNG' renders only when clicked, then offers the download (stays available on later reruns)."""
+    flag = f"png_requested_{key}"
+    if st.button("Export PNG", key=f"prep_{key}"):
+        st.session_state[flag] = True
+    if not st.session_state.get(flag):
+        return
+    with st.spinner("Rendering PNG…"):
+        png, err = _png_from_json(fig.to_json())
+    if png is not None:
+        st.download_button("Download PNG", data=png, file_name=file_name, mime="image/png", key=f"dl_{key}")
+    else:
+        st.caption(f"PNG export unavailable: {err}")
 
 
 def _fig_for_pdf(fig):
@@ -201,15 +208,21 @@ st.markdown("# Macro Dashboard")
 st.markdown('<p class="subtitle">Macro (Core) · Markets (Oil, BTC) · Regimes & Bands · Fiscal</p>', unsafe_allow_html=True)
 
 
-def _roc_1y(series: pd.Series, periods: int) -> float | None:
-    """1-year rate of change in percent. periods: 12=monthly, 52=weekly, 252=daily."""
-    if series is None or series.empty or len(series) < periods + 1:
-        return None
-    old = series.iloc[-periods - 1]
-    new = series.iloc[-1]
-    if old == 0 or not pd.notna(old) or not pd.notna(new):
-        return None
-    return ((new - old) / abs(old)) * 100
+def _roc_1y(series: pd.Series | None) -> float | None:
+    """1-year rate of change in percent, by calendar date (works for any frequency / ffilled data)."""
+    return latest_change(series)
+
+
+def _md(text: str) -> str:
+    """Escape '$' so Streamlit markdown doesn't render dollar amounts as LaTeX math."""
+    return (text or "").replace("$", "\\$")
+
+
+def _metric_note(label: str, value: str, note: str = "") -> None:
+    """A metric with a plain caption. (Passing a label as `delta` adds a colored ↑ arrow it hasn't earned.)"""
+    st.metric(label, value)
+    if note:
+        st.caption(note)
 
 
 def _model_input_cards(
@@ -273,7 +286,7 @@ with st.sidebar:
     st.subheader("AI & News")
     enable_ai = st.checkbox(
         "Enable AI Interpretation",
-        value=bool(getattr(config, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")),
+        value=bool(config.OPENAI_API_KEY),
         help="Show AI-generated executive summary and interpretation. Requires OPENAI_API_KEY.",
     )
     include_macro_drivers = st.checkbox("Include Macro Drivers headlines", value=True, help="Show 3–5 recent macro-relevant headlines.")
@@ -284,15 +297,11 @@ with st.sidebar:
 @st.cache_data(ttl=3600)
 def load_all(lookback: str):
     obs_start = config.lookback_to_observation_start(lookback)
-    rot_period = config.lookback_to_rotation_period(lookback)
     val_df = fetch_valuation_data(observation_start=obs_start)
-    risk_df = fetch_macro_risk_data(observation_start=obs_start)
+    # Extra history before the lookback so the composite / thermostat are warmed up on day one
+    risk_full = fetch_macro_risk_data(observation_start=warmup_start(obs_start))
     yield_df = fetch_yield_curve_data(observation_start=obs_start)
     liquidity_df = fetch_liquidity_data(observation_start=obs_start)
-    try:
-        rot_df = fetch_rotation_data(period=rot_period)
-    except Exception:
-        rot_df = pd.DataFrame()
     oil_df = pd.DataFrame()
     btc_series = pd.Series(dtype=float)
     real_yield_series = pd.Series(dtype=float)
@@ -302,7 +311,9 @@ def load_all(lookback: str):
         except Exception:
             pass
         try:
-            btc_series = fetch_bitcoin_data(observation_start=obs_start, yfinance_period=rot_period)
+            # Full history: the WMAs (up to 300 weeks) and the rainbow regression need it.
+            # Charts trim to the lookback for display.
+            btc_series = fetch_bitcoin_data(observation_start=None)
         except Exception:
             pass
         try:
@@ -310,12 +321,14 @@ def load_all(lookback: str):
         except Exception:
             pass
     try:
-        ladder_df = fetch_rotation_ladder_data(period=rot_period)
+        ladder_df = fetch_rotation_ladder_data(start=obs_start)
     except Exception:
         ladder_df = pd.DataFrame()
     fiscal_df = pd.DataFrame()
     model_input_series = {}
+    recession_periods = []
     if config.FRED_API_KEY:
+        recession_periods = fetch_recession_periods(observation_start=obs_start)
         try:
             fiscal_df = fetch_fiscal_data(observation_start=obs_start)
         except Exception:
@@ -324,16 +337,31 @@ def load_all(lookback: str):
             model_input_series = fetch_model_input_series(observation_start=obs_start)
         except Exception:
             pass
-    return val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series
+    return val_df, risk_full, yield_df, liquidity_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series, recession_periods
+
+
+@st.cache_data(ttl=3600)
+def compute_risk(risk_full: pd.DataFrame, display_start: str | None) -> tuple[pd.Series, pd.Series]:
+    """(composite, Market Risk Level 0–100), warmed up on the extra history and trimmed to the lookback.
+    Cached: shared by the readout, charts, bands and AI payload."""
+    if risk_full.empty:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    return compute_risk_model(risk_full, display_start)
+
 
 try:
-    val_df, risk_df, yield_df, liquidity_df, rot_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series = load_all(lookback)
+    val_df, risk_full, yield_df, liquidity_df, oil_df, btc_series, real_yield_series, ladder_df, fiscal_df, model_input_series, recession_periods = load_all(lookback)
 except Exception as e:
     st.error(f"Data load failed: {e}")
-    val_df = risk_df = yield_df = liquidity_df = rot_df = oil_df = fiscal_df = pd.DataFrame()
+    val_df = risk_full = yield_df = liquidity_df = oil_df = fiscal_df = pd.DataFrame()
+    recession_periods = []
     btc_series = real_yield_series = pd.Series(dtype=float)
     ladder_df = pd.DataFrame()
     model_input_series = {}
+
+obs_start = config.lookback_to_observation_start(lookback)
+# Risk data for display = lookback window; the model itself uses the warm-up history
+risk_df = risk_full[risk_full.index >= pd.Timestamp(obs_start)] if obs_start and not risk_full.empty else risk_full
 
 # Optional S&P 500 overlay (SPX/SP500 from valuation data), aligned to each chart's lookback
 overlay_val = None
@@ -347,17 +375,25 @@ if show_market_overlay and not val_df.empty and "SP500" in val_df.columns:
         if not aligned.empty and aligned.iloc[0] != 0:
             overlay_risk = (aligned / aligned.iloc[0]) * 100
 
-# Thermo (0-100) for Regimes bands and readout
-thermo_series = pd.Series(dtype=float)
-if not risk_df.empty:
-    raw = compute_macro_risk_composite(risk_df)
-    thermo_series = compute_risk_thermostat(raw)
-# Liquidity YoY for BTC overlay (WALCL is weekly)
+# Composite + Thermo (0-100) for the risk charts, Regimes bands and readout
+composite_series, thermo_series = compute_risk(risk_full, obs_start)
+net_liquidity_series = compute_net_liquidity(liquidity_df)
+
+
+def _plot(fig, key: str, shade_recessions: bool = True) -> None:
+    """Render a chart, with NBER recession shading on time-series charts (also kept in PNG exports)."""
+    if shade_recessions:
+        add_recession_shading(fig, recession_periods)
+    st.plotly_chart(fig, width="stretch", key=key)
+
+# Liquidity YoY (WALCL) for readout, model inputs and BTC overlay
 liquidity_yoy_series = None
-if not liquidity_df.empty and "WALCL" in liquidity_df.columns and len(liquidity_df["WALCL"]) >= 53:
-    walcl = liquidity_df["WALCL"].dropna()
-    liquidity_yoy_series = ((walcl / walcl.shift(52)) - 1) * 100
-    liquidity_yoy_series = liquidity_yoy_series.dropna()
+if not liquidity_df.empty and "WALCL" in liquidity_df.columns:
+    liquidity_yoy_series = change_over(liquidity_df["WALCL"])
+    if liquidity_yoy_series.empty:
+        liquidity_yoy_series = None
+# BTC is fetched with full history (for WMAs / regression); charts show the lookback window
+btc_display = btc_series[btc_series.index >= pd.Timestamp(obs_start)] if obs_start and not btc_series.empty else btc_series
 # CPI for oil overlay (from macro risk INFLATION = CPIAUCSL)
 cpi_series = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else None
 # BTC snapshot (WMAs, ROC, distances, Balanced/Terminal); terminal_k from sidebar
@@ -368,50 +404,8 @@ if not oil_df.empty and "DCOILWTICO" in oil_df.columns:
     oil_price = oil_df["DCOILWTICO"].dropna()
     if len(oil_price) >= 2:
         oil_snapshot["price"] = float(oil_price.iloc[-1])
-        if len(oil_price) > 28:
-            oil_snapshot["roc4w"] = (oil_price.iloc[-1] / oil_price.iloc[-28] - 1) * 100
-        if len(oil_price) >= 253:
-            oil_snapshot["roc52w"] = (oil_price.iloc[-1] / oil_price.iloc[-252] - 1) * 100
-
-
-def _thermo_zone(value: float) -> str:
-    if value < 20:
-        return "Very Low Risk"
-    if value < 40:
-        return "Low Risk"
-    if value < 60:
-        return "Moderate Risk"
-    if value < 80:
-        return "High Risk"
-    return "Extreme Risk"
-
-
-def _regime_zone_label_6(value: float) -> str:
-    """Six zones for Regimes tab snapshot (0–20, 20–40, 40–60, 60–75, 75–90, 90–100)."""
-    if value < 20:
-        return "Very Low Risk"
-    if value < 40:
-        return "Low Risk"
-    if value < 60:
-        return "Moderate Risk"
-    if value < 75:
-        return "High Risk"
-    if value < 90:
-        return "Very High Risk"
-    return "Extreme Risk"
-
-
-def _regime_tendency_text(zone: str) -> str:
-    """Short factual text for current zone (neutral language)."""
-    m = {
-        "Very Low Risk": "Historically, this zone has tended to favor risk-on assets.",
-        "Low Risk": "Historically, this zone has often supported equities and risk assets.",
-        "Moderate Risk": "Historically, this zone has been mixed; diversification often helps.",
-        "High Risk": "Historically, this zone has often favored more defensive positioning.",
-        "Very High Risk": "Historically, this zone has often favored capital preservation.",
-        "Extreme Risk": "Historically, this zone has often favored defensive assets and cash.",
-    }
-    return m.get(zone, "Zone-dependent; consider macro context.")
+        oil_snapshot["roc4w"] = latest_change(oil_price, pd.Timedelta(weeks=4))
+        oil_snapshot["roc52w"] = latest_change(oil_price)
 
 
 # ----- Current Readout Panel -----
@@ -427,22 +421,13 @@ yield_mom_status = ""
 fci_status = ""
 credit_status = ""
 
-if not risk_df.empty:
-    raw = compute_macro_risk_composite(risk_df)
-    thermo = compute_risk_thermostat(raw)
-    if not thermo.empty:
-        latest_thermo = thermo.iloc[-1]
-        macro_score = f"{latest_thermo:.0f}/100"
-        zone_label = _thermo_zone(latest_thermo)
+if not thermo_series.empty:
+    latest_thermo = thermo_series.iloc[-1]
+    macro_score = f"{latest_thermo:.0f}/100"
+    zone_label = risk_zone(latest_thermo)
 
-if not liquidity_df.empty and "WALCL" in liquidity_df.columns:
-    walcl = liquidity_df["WALCL"].dropna()
-    if len(walcl) >= 53:
-        yoy = ((walcl / walcl.shift(52)) - 1) * 100
-        yoy = yoy.dropna()
-        if not yoy.empty:
-            last_yoy = yoy.iloc[-1]
-            liquidity_status = "Expanding" if last_yoy >= 0 else "Contracting"
+if liquidity_yoy_series is not None:
+    liquidity_status = "Expanding" if liquidity_yoy_series.iloc[-1] >= 0 else "Contracting"
 
 last_spread_val = None
 last_roc_90_val = None
@@ -451,9 +436,15 @@ if not yield_df.empty and "DGS10" in yield_df.columns and "DGS3MO" in yield_df.c
     if not spread.empty:
         last_spread_val = spread.iloc[-1]
         yield_status = "Inverted" if last_spread_val < 0 else "Normal"
-        if len(spread) >= 91:
-            last_roc_90_val = spread.iloc[-1] - spread.iloc[-91]
-            yield_mom_status = "Steepening" if last_roc_90_val > 0 else "Falling"
+        last_roc_90_val = latest_change(spread, pd.Timedelta(days=90), pct=False)
+        if last_roc_90_val is not None:
+            yield_mom_status = "Steepening" if last_roc_90_val > 0 else "Flattening"
+
+last_10y2y_val = None
+if not yield_df.empty and "T10Y2Y" in yield_df.columns:
+    _t = yield_df["T10Y2Y"].dropna()
+    if not _t.empty:
+        last_10y2y_val = float(_t.iloc[-1])
 
 if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
     nfci = risk_df["CREDIT_TIGHTENING"].dropna()
@@ -479,6 +470,8 @@ if liquidity_status:
     chips.append(_readout_chip("Liquidity", liquidity_status, "green" if liquidity_status == "Expanding" else "red"))
 if yield_status and last_spread_val is not None:
     chips.append(_readout_chip("Yield Curve", f"{last_spread_val:.2f}% ({yield_status})", "red" if yield_status == "Inverted" else "green"))
+if last_10y2y_val is not None:
+    chips.append(_readout_chip("10Y–2Y", f"{last_10y2y_val:.2f}%", "red" if last_10y2y_val < 0 else "green"))
 if yield_mom_status and last_roc_90_val is not None:
     chips.append(_readout_chip("YC Momentum", f"{last_roc_90_val:.2f} ({yield_mom_status})", "green" if yield_mom_status == "Steepening" else "yellow"))
 if fci_status:
@@ -498,24 +491,25 @@ if include_macro_drivers:
         _news = fetch_recent_macro_news(max_articles=12, max_age_days=7)
         macro_drivers_list = rank_macro_relevance(_news, max_return=5)
 
-# Sync OpenAI key from Streamlit secrets at runtime (Cloud often has secrets only per-request)
-def _ensure_openai_key():
-    if os.getenv("OPENAI_API_KEY"):
-        return
-    try:
-        if hasattr(st, "secrets"):
-            ak = getattr(st.secrets, "OPENAI_API_KEY", None)
-            if not ak and "OPENAI_API_KEY" in st.secrets:
-                ak = st.secrets["OPENAI_API_KEY"]
-            if not ak and hasattr(st.secrets, "openai"):
-                ak = getattr(st.secrets.openai, "OPENAI_API_KEY", None)
-            if ak:
-                os.environ["OPENAI_API_KEY"] = str(ak)
-    except Exception:
-        pass
+def _btc_zone(snapshot: dict) -> str | None:
+    """Where BTC sits vs. its log-regression midline (Balanced) and lower band (Terminal)."""
+    price, mid, low = snapshot.get("price"), snapshot.get("balanced_price"), snapshot.get("terminal_price")
+    if price is None or mid is None:
+        return None
+    if low is not None and price < low:
+        return "below terminal band"
+    return "below midline" if price < mid else "above midline"
+
+
+def _last(df: pd.DataFrame, col: str) -> float | None:
+    """Latest non-missing value of a column (FRED frames are not forward-filled), or None."""
+    if df.empty or col not in df.columns:
+        return None
+    s = df[col].dropna()
+    return float(s.iloc[-1]) if not s.empty else None
+
 
 if enable_ai:
-    _ensure_openai_key()
     payload = build_macro_signal_payload(
         macro_risk_score=float(thermo_series.iloc[-1]) if not thermo_series.empty else None,
         macro_risk_zone=zone_label or None,
@@ -524,17 +518,17 @@ if enable_ai:
         yield_curve_spread=last_spread_val,
         yield_curve_state=yield_status or None,
         yield_curve_momentum=last_roc_90_val,
-        credit_spread=float(risk_df["CREDIT_STRESS"].iloc[-1]) if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns and len(risk_df["CREDIT_STRESS"].dropna()) else None,
+        credit_spread=_last(risk_df, "CREDIT_STRESS"),
         credit_stress_state=credit_status or None,
         financial_conditions=fci_status or None,
         spx_regime_zone=zone_label or None,
         btc_price=float(btc_snapshot.get("price")) if btc_snapshot and btc_snapshot.get("price") is not None else None,
-        btc_zone="mid-band",
-        oil_price=float(oil_snapshot.get("price")) if oil_snapshot and oil_snapshot.get("price") is not None else None,
-        oil_roc_1y=float(oil_snapshot.get("roc52w")) if oil_snapshot and oil_snapshot.get("roc52w") is not None else None,
-        deficit_pct_gdp=float(fiscal_df["DEFICIT_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "DEFICIT_PCT_GDP" in fiscal_df.columns and not fiscal_df["DEFICIT_PCT_GDP"].dropna().empty else None,
-        debt_to_gdp=float(fiscal_df["DEBT_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "DEBT_PCT_GDP" in fiscal_df.columns and not fiscal_df["DEBT_PCT_GDP"].dropna().empty else None,
-        interest_burden_pct=float(fiscal_df["INTEREST_PCT_GDP"].iloc[-1]) if not fiscal_df.empty and "INTEREST_PCT_GDP" in fiscal_df.columns and not fiscal_df["INTEREST_PCT_GDP"].dropna().empty else None,
+        btc_zone=_btc_zone(btc_snapshot) if btc_snapshot else None,
+        oil_price=oil_snapshot.get("price"),
+        oil_roc_1y=oil_snapshot.get("roc52w"),
+        deficit_pct_gdp=_last(fiscal_df, "DEFICIT_PCT_GDP"),
+        debt_to_gdp=_last(fiscal_df, "DEBT_PCT_GDP"),
+        interest_burden_pct=_last(fiscal_df, "INTEREST_PCT_GDP"),
     )
     with st.spinner("Generating AI interpretation…"):
         ai_result = generate_ai_summary(payload, macro_drivers_list, date.today().isoformat())
@@ -548,21 +542,21 @@ if enable_ai or include_macro_drivers:
         st.markdown("#### AI Interpretation")
         with st.container():
             st.markdown("**Executive summary**")
-            st.markdown(ai_result.get("executive_summary", ""))
+            st.markdown(_md(ai_result.get("executive_summary", "")))
             if ai_result.get("what_changed"):
                 st.markdown("**What changed**")
-                st.markdown(ai_result.get("what_changed", ""))
+                st.markdown(_md(ai_result.get("what_changed", "")))
             if ai_result.get("what_to_watch"):
                 st.markdown("**What to watch**")
-                st.markdown(ai_result.get("what_to_watch", ""))
+                st.markdown(_md(ai_result.get("what_to_watch", "")))
             if ai_result.get("drivers_paragraph"):
-                st.markdown(ai_result.get("drivers_paragraph", ""))
+                st.markdown(_md(ai_result.get("drivers_paragraph", "")))
             if ai_result.get("chart_insights"):
                 st.markdown("**What the charts say about today’s economy**")
-                st.markdown(ai_result.get("chart_insights", ""))
+                st.markdown(_md(ai_result.get("chart_insights", "")))
             if ai_result.get("asset_implications"):
                 st.markdown("**Asset implications**")
-                st.markdown(ai_result.get("asset_implications", ""))
+                st.markdown(_md(ai_result.get("asset_implications", "")))
         st.divider()
     elif enable_ai and not ai_result:
         st.caption(
@@ -571,13 +565,13 @@ if enable_ai or include_macro_drivers:
     if macro_drivers_list:
         st.markdown("#### Macro Drivers")
         for a in macro_drivers_list:
-            with st.expander(f"{a.get('title', '')} — {a.get('source', '')} ({a.get('date', '')})"):
-                st.markdown(a.get("summary", ""))
+            with st.expander(_md(f"{a.get('title', '')} — {a.get('source', '')} ({a.get('date', '')})")):
+                st.markdown(_md(a.get("summary", "")))
                 if a.get("link"):
                     st.markdown(f"[Read more]({a['link']})")
         st.divider()
 
-# Build Tab 3 "last" chart once for PDF (rotation ladder or FRED regime)
+# Tab 3 "last" chart: rotation ladder, or FRED-only regime curves when Yahoo is off/unavailable
 fig4 = None
 last_chart_header = "Rotation Ladder"
 last_chart_desc = "Z-score normalized relative strength ratios (risk-on → defensive). Higher line = that ratio outperforming."
@@ -590,42 +584,8 @@ else:
     fig4 = build_rotation_ladder_chart(ladder_df)
 
 
-def _build_pdf_sections(
-    lookback,
-    show_event_markers,
-    show_10y_3m_lines,
-    show_market_overlay,
-    oil_log_scale,
-    oil_show_yoy,
-    oil_show_cpi,
-    btc_log_scale,
-    btc_show_liquidity,
-    btc_show_real_yield,
-    btc_rainbow_k,
-    spx_log_scale,
-    use_fred_only_last_chart,
-    val_df,
-    risk_df,
-    yield_df,
-    liquidity_df,
-    rot_df,
-    oil_df,
-    btc_series,
-    real_yield_series,
-    ladder_df,
-    overlay_val,
-    overlay_risk,
-    thermo_series,
-    liquidity_yoy_series,
-    cpi_series,
-    ai_summary=None,
-    macro_drivers=None,
-):
-    """Build full report sections: Executive Summary + Macro Radar + AI/Drivers, then all charts."""
-    obs_start = config.lookback_to_observation_start(lookback)
-    sections = []
-
-    # Snapshot for Page 1
+def _build_pdf_summary(ai_summary=None, macro_drivers=None) -> dict:
+    """Page-1 section for the PDF: snapshot, Macro Radar, AI interpretation and macro drivers."""
     snapshot = {}
     if macro_score and zone_label:
         snapshot["macro_score"] = macro_score
@@ -639,126 +599,17 @@ def _build_pdf_sections(
         snapshot["credit_status"] = credit_status
     if fci_status:
         snapshot["fci_status"] = fci_status
-
-    # Radar figure (recomputed for PDF)
-    radar_fig = build_macro_radar_chart(risk_df, liquidity_df, yield_df, thermo_series)
-
-    summary_section = {
+    return {
         "type": "summary",
         "title": "Executive Summary",
         "report_date": date.today().isoformat(),
         "lookback_label": lookback,
         "data_sources": "FRED, Yahoo Finance",
         "snapshot": snapshot,
-        "radar_fig": radar_fig,
+        "radar_fig": build_macro_radar_chart(risk_df, liquidity_df, yield_df, thermo_series),
         "ai_summary": ai_summary,
         "macro_drivers": macro_drivers or [],
     }
-    sections.append(summary_section)
-
-    # Macro (Core) tab charts — same figures already built above
-    macro_captions = [
-        "Global liquidity (Fed balance sheet YoY). Rising liquidity tends to support asset prices; falling liquidity can tighten financial conditions.",
-        "Stock market pressure combines rates, inflation, unemployment, and liquidity. Higher values mean more pressure on valuations; lower values tend to support stocks.",
-        "Economic risk index combines multiple macro indicators. The blue line shows current risk level; the ROC line shows how quickly conditions are changing.",
-        "Yield curve (10Y – 3M). An inverted curve has historically signaled increasing recession risk.",
-        "Chicago Fed NFCI. Higher values indicate tighter financial conditions; lower values indicate easier conditions. Zero is the baseline.",
-        "ICE BofA US High Yield OAS. Rising spreads mean credit stress is increasing. Reference: 3% calm, 5% stress rising, 7% high stress.",
-        "Market risk level (0–100) from macro signals. Lower scores suggest a stable environment; higher scores suggest growing stress. Bands indicate very low through extreme risk.",
-    ]
-    macro_tuples = [
-        ("Global Liquidity", macro_captions[0], fig_liquidity),
-        ("Stock Market Pressure", macro_captions[1], fig1),
-        ("Economic Risk Index", macro_captions[2], fig2),
-        ("Yield Curve (10Y – 3M) + Momentum", macro_captions[3], fig_yield),
-        ("Financial Conditions Index", macro_captions[4], fig_fci),
-        ("Credit Spreads (High Yield OAS)", macro_captions[5], fig_credit),
-        ("Market Risk Level (0–100)", macro_captions[6], fig3),
-    ]
-    for title, caption, fig in macro_tuples:
-        if fig is not None:
-            sections.append({"type": "chart", "title": f"Macro — {title}", "caption": caption, "fig": fig})
-
-    # Markets tab charts — build here for PDF (recompute so PDF does not depend on active tab)
-    fig_oil = build_oil_chart(
-        oil_df,
-        log_scale=oil_log_scale,
-        show_yoy=oil_show_yoy,
-        cpi_yoy_series=cpi_series,
-        show_event_markers=show_event_markers,
-    )
-    fig_btc = build_bitcoin_chart(
-        btc_series,
-        log_scale=btc_log_scale,
-        liquidity_yoy_series=liquidity_yoy_series if btc_show_liquidity else None,
-        real_yield_series=real_yield_series if btc_show_real_yield else None,
-        show_event_markers=show_event_markers,
-    )
-    fig_rainbow = build_btc_rainbow_chart(btc_series, display_start=obs_start, log_scale=btc_log_scale)
-    if fig_oil is not None:
-        sections.append({
-            "type": "chart",
-            "title": "Markets — Oil (WTI)",
-            "caption": "WTI spot price (FRED DCOILWTICO). Reflects commodity and inflation expectations.",
-            "fig": fig_oil,
-        })
-    if fig_btc is not None:
-        sections.append({
-            "type": "chart",
-            "title": "Markets — Bitcoin (BTC/USD)",
-            "caption": "Bitcoin price from FRED or Yahoo Finance. Optional overlays: Liquidity YoY, 10Y TIPS real yield.",
-            "fig": fig_btc,
-        })
-    if fig_rainbow is not None:
-        sections.append({
-            "type": "chart",
-            "title": "Markets — Bitcoin Rainbow (Log Regression Bands)",
-            "caption": "Log regression bands (full history). Balanced = midline; Terminal = lower band proxy.",
-            "fig": fig_rainbow,
-        })
-
-    # Regimes & Bands tab charts
-    sp500_series = val_df["SP500"].dropna() if not val_df.empty and "SP500" in val_df.columns else pd.Series(dtype=float)
-    oil_price_series = oil_df["DCOILWTICO"].dropna() if not oil_df.empty and "DCOILWTICO" in oil_df.columns else pd.Series(dtype=float)
-    if not sp500_series.empty and not thermo_series.empty:
-        fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers, log_scale=spx_log_scale)
-        if fig_bands_spx is not None:
-            sections.append({
-                "type": "chart",
-                "title": "Regimes — S&P 500 with risk bands",
-                "caption": "Background color shows macro risk zone over time. Price (white line) on top.",
-                "fig": fig_bands_spx,
-            })
-    if not btc_series.empty and not thermo_series.empty:
-        fig_bands_btc = build_bands_chart(btc_series, thermo_series, "Bitcoin — Macro Risk Bands", show_event_markers=show_event_markers)
-        if fig_bands_btc is not None:
-            sections.append({
-                "type": "chart",
-                "title": "Regimes — Bitcoin with risk bands",
-                "caption": "BTC price with same macro risk zone shading.",
-                "fig": fig_bands_btc,
-            })
-    if not oil_price_series.empty and not thermo_series.empty:
-        fig_bands_oil = build_bands_chart(oil_price_series, thermo_series, "WTI Oil — Macro Risk Bands", show_event_markers=show_event_markers)
-        if fig_bands_oil is not None:
-            sections.append({
-                "type": "chart",
-                "title": "Regimes — Oil (WTI) with risk bands",
-                "caption": "Oil price with macro risk zone shading.",
-                "fig": fig_bands_oil,
-            })
-    if fig4 is not None:
-        sections.append({
-            "type": "chart",
-            "title": f"Regimes — {last_chart_header}",
-            "caption": last_chart_desc,
-            "fig": fig4,
-        })
-
-    return sections
-
-# Initialize PNG bytes for PDF (set when each chart is built)
-png_liq = png1 = png2 = png_yield = png_fci = png_credit = png3 = png4 = None
 
 # ----- Tabs: Macro (Core) | Markets | Regimes & Bands | Fiscal -----
 tab_macro, tab_markets, tab_regimes, tab_fiscal = st.tabs(["Macro (Core)", "Markets", "Regimes & Bands", "Fiscal"])
@@ -770,9 +621,9 @@ with tab_macro:
     _v = model_input_series.get("DGS2"); _dgs2 = _v if isinstance(_v, pd.Series) else pd.Series(dtype=float)
     _dgs10 = yield_df["DGS10"].dropna() if not yield_df.empty and "DGS10" in yield_df.columns else pd.Series(dtype=float)
     _cpi = risk_df["INFLATION"].dropna() if not risk_df.empty and "INFLATION" in risk_df.columns else pd.Series(dtype=float)
-    _cpi_yoy = ((_cpi / _cpi.shift(12)) - 1) * 100 if len(_cpi) >= 13 else pd.Series(dtype=float)
+    _cpi_yoy = change_over(_cpi)
     _v = model_input_series.get("CPILFESL"); _core_cpi = _v if isinstance(_v, pd.Series) else pd.Series(dtype=float)
-    _core_cpi_yoy = ((_core_cpi / _core_cpi.shift(12)) - 1) * 100 if len(_core_cpi) >= 13 else pd.Series(dtype=float)
+    _core_cpi_yoy = change_over(_core_cpi)
     _unemp = risk_df["UNEMPLOYMENT"].dropna() if not risk_df.empty and "UNEMPLOYMENT" in risk_df.columns else pd.Series(dtype=float)
     _v = model_input_series.get("ICSA"); _claims = _v if isinstance(_v, pd.Series) else pd.Series(dtype=float)
     _walcl = liquidity_df["WALCL"].dropna() if not liquidity_df.empty and "WALCL" in liquidity_df.columns else pd.Series(dtype=float)
@@ -780,46 +631,49 @@ with tab_macro:
     _nfci = risk_df["CREDIT_TIGHTENING"].dropna() if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns else pd.Series(dtype=float)
     _macro_inputs = []
     if not _fed.empty:
-        _macro_inputs.append(("Fed Funds Rate", f"{_fed.iloc[-1]:.2f}%", _roc_1y(_fed, 12), True))
+        _macro_inputs.append(("Fed Funds Rate", f"{_fed.iloc[-1]:.2f}%", _roc_1y(_fed), True))
     if not _dgs2.empty:
-        _macro_inputs.append(("2Y Treasury", f"{_dgs2.iloc[-1]:.2f}%", _roc_1y(_dgs2, 252), True))
+        _macro_inputs.append(("2Y Treasury", f"{_dgs2.iloc[-1]:.2f}%", _roc_1y(_dgs2), True))
     if not _dgs10.empty:
-        _macro_inputs.append(("10Y Treasury", f"{_dgs10.iloc[-1]:.2f}%", _roc_1y(_dgs10, 252), True))
+        _macro_inputs.append(("10Y Treasury", f"{_dgs10.iloc[-1]:.2f}%", _roc_1y(_dgs10), True))
     if not _cpi_yoy.empty:
-        _macro_inputs.append(("CPI YoY", f"{_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_cpi_yoy, 12), True))
+        _macro_inputs.append(("CPI YoY", f"{_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_cpi_yoy), True))
     if not _core_cpi_yoy.empty:
-        _macro_inputs.append(("Core CPI YoY", f"{_core_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_core_cpi_yoy, 12), True))
+        _macro_inputs.append(("Core CPI YoY", f"{_core_cpi_yoy.iloc[-1]:.1f}%", _roc_1y(_core_cpi_yoy), True))
     if not _unemp.empty:
-        _macro_inputs.append(("Unemployment", f"{_unemp.iloc[-1]:.1f}%", _roc_1y(_unemp, 12), True))
+        _macro_inputs.append(("Unemployment", f"{_unemp.iloc[-1]:.1f}%", _roc_1y(_unemp), True))
     if not _claims.empty:
-        _macro_inputs.append(("Initial Claims", f"{_claims.iloc[-1]:,.0f}", _roc_1y(_claims, 52), True))
+        _macro_inputs.append(("Initial Claims", f"{_claims.iloc[-1]:,.0f}", _roc_1y(_claims), True))
     if not _walcl.empty:
-        _macro_inputs.append(("Fed Balance Sheet", f"{_walcl.iloc[-1]/1e9:.1f}B", _roc_1y(_walcl, 52), False))
+        _macro_inputs.append(("Fed Balance Sheet", f"${_walcl.iloc[-1]/1e6:.2f}T", _roc_1y(_walcl), False))
+    if not net_liquidity_series.empty:
+        _macro_inputs.append(("Net Liquidity", f"${net_liquidity_series.iloc[-1]/1e6:.2f}T", _roc_1y(net_liquidity_series), False))
     if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
-        _macro_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series, 52), False))
+        _macro_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series), False))
     if not _hy.empty:
-        _macro_inputs.append(("HY OAS", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy, 252), True))
+        _macro_inputs.append(("HY OAS", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy), True))
     if not _nfci.empty:
-        _macro_inputs.append(("NFCI", f"{_nfci.iloc[-1]:.3f}", _roc_1y(_nfci, 252), True))
+        _macro_inputs.append(("NFCI", f"{_nfci.iloc[-1]:.3f}", _roc_1y(_nfci), True))
     _model_input_cards(_macro_inputs)
     st.markdown("#### Today's Snapshot")
     with st.container():
         c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
-            st.metric("Macro Risk", f"{macro_score}" if macro_score else "—", zone_label or "")
+            _metric_note("Macro Risk", f"{macro_score}" if macro_score else "—", zone_label or "")
         with c2:
-            st.metric("Liquidity", liquidity_status or "—", "WALCL YoY")
+            _metric_note("Liquidity", liquidity_status or "—", "WALCL YoY")
         with c3:
             spread_str = f"{last_spread_val:.2f}%" if last_spread_val is not None else "—"
-            st.metric("Yield Curve (10Y–3M)", spread_str, yield_status or "")
+            _metric_note("Yield Curve (10Y–3M)", spread_str, " · ".join(
+                x for x in [yield_status, f"10Y–2Y {last_10y2y_val:.2f}%" if last_10y2y_val is not None else ""] if x))
         with c4:
             mom_str = f"{last_roc_90_val:.2f}" if last_roc_90_val is not None else "—"
-            st.metric("YC Momentum (90d)", mom_str, yield_mom_status or "")
+            _metric_note("YC Momentum (90d)", mom_str, yield_mom_status or "")
         with c5:
-            st.metric("FCI", fci_status or "—", "NFCI")
+            _metric_note("FCI", fci_status or "—", "NFCI")
         c6, c7, _ = st.columns([1, 1, 2])
         with c6:
-            st.metric("Credit Spreads", credit_status or "—", "HY OAS")
+            _metric_note("Credit Spreads", credit_status or "—", "HY OAS")
     st.divider()
 
     # ----- Chart 1: Global Liquidity -----
@@ -831,12 +685,21 @@ with tab_macro:
     )
     fig_liquidity = build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers)
     if fig_liquidity is not None:
-        st.plotly_chart(fig_liquidity, width="stretch", key="liquidity")
-        png_liq, _ = _try_export_png(fig_liquidity)
-        if png_liq is not None:
-            st.download_button("Export PNG", data=png_liq, file_name="01_global_liquidity.png", mime="image/png", key="dl_liquidity")
+        _plot(fig_liquidity, "liquidity")
+        _png_export(fig_liquidity, "01_global_liquidity.png", "liquidity")
     else:
         st.info("Not enough liquidity data. Check FRED series WALCL (need 53+ weekly points for YoY).")
+    st.markdown(
+        '<p class="section-desc"><b>Net liquidity</b> subtracts cash parked at the Treasury (TGA) and in the Fed\'s '
+        'reverse repo facility from the balance sheet — closer to the liquidity actually reaching markets.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_net_liq = build_net_liquidity_chart(liquidity_df, show_event_markers=show_event_markers)
+    if fig_net_liq is not None:
+        _plot(fig_net_liq, "net_liquidity")
+        _png_export(fig_net_liq, "01b_net_liquidity.png", "net_liquidity")
+    else:
+        st.info("Not enough data for net liquidity. FRED series WALCL, WTREGEN and RRPONTSYD required.")
 
     st.header("2. Stock Market Pressure")
     st.markdown(
@@ -848,10 +711,8 @@ with tab_macro:
     )
     fig1 = build_valuation_chart(val_df, overlay_series=overlay_val, show_event_markers=show_event_markers)
     if fig1 is not None:
-        st.plotly_chart(fig1, width="stretch", key="vpi")
-        png1, _ = _try_export_png(fig1)
-        if png1 is not None:
-            st.download_button("Export PNG", data=png1, file_name="02_stock_market_pressure.png", mime="image/png", key="dl_vpi")
+        _plot(fig1, "vpi")
+        _png_export(fig1, "02_stock_market_pressure.png", "vpi")
     else:
         st.info("Not enough valuation data. Check FRED_API_KEY and series availability.")
 
@@ -863,27 +724,24 @@ with tab_macro:
         'Sharp increases often signal rising instability before markets fully react.</p>',
         unsafe_allow_html=True,
     )
-    fig2 = build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers)
+    fig2 = build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, composite=composite_series)
     if fig2 is not None:
-        st.plotly_chart(fig2, width="stretch", key="macro_risk")
-        png2, _ = _try_export_png(fig2)
-        if png2 is not None:
-            st.download_button("Export PNG", data=png2, file_name="03_economic_risk_index.png", mime="image/png", key="dl_macro")
+        _plot(fig2, "macro_risk")
+        _png_export(fig2, "03_economic_risk_index.png", "macro")
     else:
         st.info("Not enough macro risk data.")
 
-    st.header("4. Yield Curve (10Y – 3M) + Momentum")
+    st.header("4. Yield Curve (10Y – 3M, 10Y – 2Y) + Momentum")
     st.markdown(
         '<p class="section-desc">This chart shows the difference between long-term and short-term U.S. Treasury interest rates. '
-        'When short-term rates rise above long-term rates (an inverted yield curve), it has historically signaled increasing recession risk.</p>',
+        'When short-term rates rise above long-term rates (an inverted yield curve), it has historically signaled increasing recession risk. '
+        'The green line is the 10Y – 2Y spread, the version most often quoted in the press.</p>',
         unsafe_allow_html=True,
     )
     fig_yield = build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m_lines, show_event_markers=show_event_markers)
     if fig_yield is not None:
-        st.plotly_chart(fig_yield, width="stretch", key="yield_curve")
-        png_yield, _ = _try_export_png(fig_yield)
-        if png_yield is not None:
-            st.download_button("Export PNG", data=png_yield, file_name="04_yield_curve_10y_3m.png", mime="image/png", key="dl_yield")
+        _plot(fig_yield, "yield_curve")
+        _png_export(fig_yield, "04_yield_curve_10y_3m.png", "yield")
     else:
         st.info("Not enough yield curve data. Check FRED series DGS10 and DGS3MO.")
 
@@ -895,10 +753,8 @@ with tab_macro:
     )
     fig_fci = build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers)
     if fig_fci is not None:
-        st.plotly_chart(fig_fci, width="stretch", key="fci")
-        png_fci, _ = _try_export_png(fig_fci)
-        if png_fci is not None:
-            st.download_button("Export PNG", data=png_fci, file_name="05_financial_conditions_index.png", mime="image/png", key="dl_fci")
+        _plot(fig_fci, "fci")
+        _png_export(fig_fci, "05_financial_conditions_index.png", "fci")
     else:
         st.info("Not enough data for Financial Conditions Index. NFCI (FRED) required.")
 
@@ -910,10 +766,8 @@ with tab_macro:
     )
     fig_credit = build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers)
     if fig_credit is not None:
-        st.plotly_chart(fig_credit, width="stretch", key="credit")
-        png_credit, _ = _try_export_png(fig_credit)
-        if png_credit is not None:
-            st.download_button("Export PNG", data=png_credit, file_name="06_credit_spreads.png", mime="image/png", key="dl_credit")
+        _plot(fig_credit, "credit")
+        _png_export(fig_credit, "06_credit_spreads.png", "credit")
     else:
         st.info("Not enough data for Credit Spreads. BAMLH0A0HYM2 (FRED) required.")
 
@@ -926,19 +780,17 @@ with tab_macro:
         unsafe_allow_html=True,
     )
     fig3 = build_thermostat_chart(
-        risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers
+        risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, thermo=thermo_series
     )
     if fig3 is not None:
         latest = thermo_series.iloc[-1] if not thermo_series.empty else 0
-        st.plotly_chart(fig3, width="stretch", key="thermo")
+        _plot(fig3, "thermo")
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Current reading", f"{latest:.0f}", "0–100 scale")
+            _metric_note("Current reading", f"{latest:.0f}", "0–100 scale")
         with col2:
-            st.metric("Zone", _thermo_zone(latest), "")
-        png3, _ = _try_export_png(fig3)
-        if png3 is not None:
-            st.download_button("Export PNG", data=png3, file_name="07_market_risk_level.png", mime="image/png", key="dl_thermo")
+            st.metric("Zone", risk_zone(latest))
+        _png_export(fig3, "07_market_risk_level.png", "thermo")
     else:
         st.info("Requires macro risk data.")
 
@@ -953,9 +805,9 @@ with tab_markets:
         if btc_snapshot and btc_snapshot.get(ma) is not None:
             _market_inputs.append((f"BTC {ma.upper()}", f"${btc_snapshot[ma]:,.0f}", None, False))
     if not _sp500.empty:
-        _market_inputs.append(("S&P 500", f"{_sp500.iloc[-1]:,.0f}", _roc_1y(_sp500, 252), False))
+        _market_inputs.append(("S&P 500", f"{_sp500.iloc[-1]:,.0f}", _roc_1y(_sp500), False))
     if not _wti.empty:
-        _market_inputs.append(("WTI Oil", f"${_wti.iloc[-1]:.2f}", _roc_1y(_wti, 252), False))
+        _market_inputs.append(("WTI Oil", f"${_wti.iloc[-1]:.2f}", _roc_1y(_wti), False))
     _model_input_cards(_market_inputs)
     st.markdown("#### Today's Snapshot")
     # BTC strip
@@ -963,22 +815,22 @@ with tab_markets:
         st.caption("**BTC**")
         r1, r2, r3, r4, r5 = st.columns(5)
         with r1:
-            st.metric("BTC Price", f"${btc_snapshot['price']:,.0f}" if btc_snapshot.get("price") else "—", "")
+            st.metric("BTC Price", f"${btc_snapshot['price']:,.0f}" if btc_snapshot.get("price") else "—")
             for k in ["wma50", "wma100", "wma200", "wma300"]:
                 v = btc_snapshot.get(k)
                 st.caption(f"{k}: ${v:,.0f}" if v is not None else f"{k}: —")
         with r2:
-            st.metric("Balanced (proxy)", f"${btc_snapshot['balanced_price']:,.0f}" if btc_snapshot.get("balanced_price") else "—", "")
-            st.metric("Terminal (proxy)", f"${btc_snapshot['terminal_price']:,.0f}" if btc_snapshot.get("terminal_price") else "—", "")
+            st.metric("Balanced (proxy)", f"${btc_snapshot['balanced_price']:,.0f}" if btc_snapshot.get("balanced_price") else "—")
+            st.metric("Terminal (proxy)", f"${btc_snapshot['terminal_price']:,.0f}" if btc_snapshot.get("terminal_price") else "—")
         with r3:
             for label, key in [("1W", "roc1w"), ("4W", "roc4w"), ("12W", "roc12w"), ("52W", "roc52w")]:
                 v = btc_snapshot.get(key)
-                st.metric(f"ROC {label}", f"{v:.1f}%" if v is not None else "—", "")
+                st.metric(f"ROC {label}", f"{v:.1f}%" if v is not None else "—")
         with r4:
             v200 = btc_snapshot.get("dist_200wma_pct")
             v300 = btc_snapshot.get("dist_300wma_pct")
-            st.metric("Dist 200WMA", f"{v200:.1f}%" if v200 is not None else "—", "")
-            st.metric("Dist 300WMA", f"{v300:.1f}%" if v300 is not None else "—", "")
+            st.metric("Dist 200WMA", f"{v200:.1f}%" if v200 is not None else "—")
+            st.metric("Dist 300WMA", f"{v300:.1f}%" if v300 is not None else "—")
         with r5:
             st.caption("WMAs = weighted moving avg (weekly)")
     # Oil snapshot
@@ -986,13 +838,13 @@ with tab_markets:
         st.caption("**Oil (WTI)**")
         o1, o2, o3 = st.columns(3)
         with o1:
-            st.metric("WTI Spot", f"${oil_snapshot.get('price', 0):.2f}" if oil_snapshot.get("price") is not None else "—", "")
+            st.metric("WTI Spot", f"${oil_snapshot.get('price', 0):.2f}" if oil_snapshot.get("price") is not None else "—")
         with o2:
             v = oil_snapshot.get("roc4w")
-            st.metric("4W ROC", f"{v:.1f}%" if v is not None else "—", "")
+            st.metric("4W ROC", f"{v:.1f}%" if v is not None else "—")
         with o3:
             v = oil_snapshot.get("roc52w")
-            st.metric("52W ROC", f"{v:.1f}%" if v is not None else "—", "")
+            st.metric("52W ROC", f"{v:.1f}%" if v is not None else "—")
     st.divider()
 
     st.header("Oil (WTI)")
@@ -1004,11 +856,11 @@ with tab_markets:
         oil_df,
         log_scale=oil_log_scale,
         show_yoy=oil_show_yoy,
-        cpi_yoy_series=cpi_series,
+        cpi_series=cpi_series if oil_show_cpi else None,
         show_event_markers=show_event_markers,
     )
     if fig_oil is not None:
-        st.plotly_chart(fig_oil, width="stretch", key="oil")
+        _plot(fig_oil, "oil")
     else:
         st.info("Not enough oil data. Check FRED DCOILWTICO and API key.")
 
@@ -1018,14 +870,14 @@ with tab_markets:
         unsafe_allow_html=True,
     )
     fig_btc = build_bitcoin_chart(
-        btc_series,
+        btc_display,
         log_scale=btc_log_scale,
         liquidity_yoy_series=liquidity_yoy_series if btc_show_liquidity else None,
         real_yield_series=real_yield_series if btc_show_real_yield else None,
         show_event_markers=show_event_markers,
     )
     if fig_btc is not None:
-        st.plotly_chart(fig_btc, width="stretch", key="btc")
+        _plot(fig_btc, "btc")
     else:
         st.info("Not enough Bitcoin data. Try FRED CBBTCUSD or Yahoo BTC-USD.")
 
@@ -1034,14 +886,13 @@ with tab_markets:
         '<p class="section-desc">Log regression bands (full history); display follows lookback. Balanced = midline; Terminal = lower band (proxy).</p>',
         unsafe_allow_html=True,
     )
-    obs_start = config.lookback_to_observation_start(lookback)
     fig_rainbow = build_btc_rainbow_chart(
         btc_series,
         display_start=obs_start,
         log_scale=btc_log_scale,
     )
     if fig_rainbow is not None:
-        st.plotly_chart(fig_rainbow, width="stretch", key="btc_rainbow")
+        _plot(fig_rainbow, "btc_rainbow")
     else:
         st.info("Not enough BTC history for Rainbow (need 30+ points).")
 
@@ -1050,48 +901,48 @@ with tab_regimes:
     _spread_series = yield_df["DGS10"].sub(yield_df["DGS3MO"]).dropna() if not yield_df.empty and "DGS10" in yield_df.columns and "DGS3MO" in yield_df.columns else pd.Series(dtype=float)
     _regime_inputs = []
     if not thermo_series.empty:
-        _regime_inputs.append(("Market Risk Score", f"{thermo_series.iloc[-1]:.0f}/100", _roc_1y(thermo_series, 252), True))
+        _regime_inputs.append(("Market Risk Score", f"{thermo_series.iloc[-1]:.0f}/100", _roc_1y(thermo_series), True))
     if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
-        _regime_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series, 52), False))
+        _regime_inputs.append(("Liquidity YoY", f"{liquidity_yoy_series.iloc[-1]:.1f}%", _roc_1y(liquidity_yoy_series), False))
     if not _spread_series.empty:
-        _regime_inputs.append(("Yield Curve (10Y–3M)", f"{_spread_series.iloc[-1]:.2f}%", _roc_1y(_spread_series, 252), False))  # higher spread = steeper = better
+        _regime_inputs.append(("Yield Curve (10Y–3M)", f"{_spread_series.iloc[-1]:.2f}%", _roc_1y(_spread_series), False))  # higher spread = steeper = better
     if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns:
         _hy = risk_df["CREDIT_STRESS"].dropna()
         if not _hy.empty:
-            _regime_inputs.append(("Credit Spread", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy, 252), True))
+            _regime_inputs.append(("Credit Spread", f"{_hy.iloc[-1]:.2f}%", _roc_1y(_hy), True))
     if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
         _n = risk_df["CREDIT_TIGHTENING"].dropna()
         if not _n.empty:
-            _regime_inputs.append(("NFCI", f"{_n.iloc[-1]:.3f}", _roc_1y(_n, 252), True))
+            _regime_inputs.append(("NFCI", f"{_n.iloc[-1]:.3f}", _roc_1y(_n), True))
     _model_input_cards(_regime_inputs)
     st.markdown("#### Today's Snapshot")
     r1, r2, r3, r4, r5 = st.columns(5)
     with r1:
         risk_val = thermo_series.iloc[-1] if not thermo_series.empty else None
-        zone = _regime_zone_label_6(risk_val) if risk_val is not None else "—"
-        st.metric("Risk score", f"{risk_val:.0f}/100" if risk_val is not None else "—", zone)
+        zone = risk_zone(risk_val) if risk_val is not None else "—"
+        _metric_note("Risk score", f"{risk_val:.0f}/100" if risk_val is not None else "—", zone)
     with r2:
         liq_yoy = None
         if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
             liq_yoy = float(liquidity_yoy_series.iloc[-1])
-        st.metric("Liquidity YoY", f"{liq_yoy:.1f}%" if liq_yoy is not None else "—", "WALCL")
+        _metric_note("Liquidity YoY", f"{liq_yoy:.1f}%" if liq_yoy is not None else "—", "WALCL")
     with r3:
         spread_str = f"{last_spread_val:.2f}%" if last_spread_val is not None else "—"
         mom_str = f"{last_roc_90_val:.2f}" if last_roc_90_val is not None else "—"
-        st.metric("Yield curve (10Y–3M)", spread_str, yield_status or "")
+        _metric_note("Yield curve (10Y–3M)", spread_str, yield_status or "")
         st.caption(f"Momentum (90d): {mom_str}")
     with r4:
         hy = None
         if not risk_df.empty and "CREDIT_STRESS" in risk_df.columns:
             s = risk_df["CREDIT_STRESS"].dropna()
             hy = float(s.iloc[-1]) if len(s) else None
-        st.metric("HY OAS", f"{hy:.2f}%" if hy is not None else "—", "")
+        st.metric("HY OAS", f"{hy:.2f}%" if hy is not None else "—")
     with r5:
         nfci = None
         if not risk_df.empty and "CREDIT_TIGHTENING" in risk_df.columns:
             s = risk_df["CREDIT_TIGHTENING"].dropna()
             nfci = float(s.iloc[-1]) if len(s) else None
-        st.metric("NFCI", f"{nfci:.3f}" if nfci is not None else "—", "FCI")
+        _metric_note("NFCI", f"{nfci:.3f}" if nfci is not None else "—", "FCI")
     st.divider()
     st.markdown(
         "**Macro Risk Bands** use the Market Risk Level (0–100) to shade each chart by regime. "
@@ -1103,16 +954,16 @@ with tab_regimes:
         st.caption("Background color shows macro risk zone over time. Price (white line) on top.")
         fig_bands_spx = build_bands_chart(sp500_series, thermo_series, "S&P 500 — Macro Risk Bands", show_event_markers=show_event_markers, log_scale=spx_log_scale)
         if fig_bands_spx is not None:
-            st.plotly_chart(fig_bands_spx, width="stretch", key="bands_spx")
+            _plot(fig_bands_spx, "bands_spx", shade_recessions=False)
     else:
         st.info("Need valuation and risk data for S&P 500 bands.")
 
-    if not btc_series.empty and not thermo_series.empty:
+    if not btc_display.empty and not thermo_series.empty:
         st.subheader("Bitcoin with risk bands")
         st.caption("BTC price with same macro risk zone shading.")
-        fig_bands_btc = build_bands_chart(btc_series, thermo_series, "Bitcoin — Macro Risk Bands", show_event_markers=show_event_markers)
+        fig_bands_btc = build_bands_chart(btc_display, thermo_series, "Bitcoin — Macro Risk Bands", show_event_markers=show_event_markers)
         if fig_bands_btc is not None:
-            st.plotly_chart(fig_bands_btc, width="stretch", key="bands_btc")
+            _plot(fig_bands_btc, "bands_btc", shade_recessions=False)
     else:
         st.info("Need Bitcoin and risk data for bands.")
 
@@ -1122,17 +973,15 @@ with tab_regimes:
         st.caption("Oil price with macro risk zone shading.")
         fig_bands_oil = build_bands_chart(oil_price_series, thermo_series, "WTI Oil — Macro Risk Bands", show_event_markers=show_event_markers)
         if fig_bands_oil is not None:
-            st.plotly_chart(fig_bands_oil, width="stretch", key="bands_oil")
+            _plot(fig_bands_oil, "bands_oil", shade_recessions=False)
     else:
         st.info("Need oil and risk data for bands.")
 
     st.subheader(last_chart_header)
     st.markdown(f'<p class="section-desc">{last_chart_desc}</p>', unsafe_allow_html=True)
     if fig4 is not None:
-        st.plotly_chart(fig4, width="stretch", key="rotation")
-        png4, _ = _try_export_png(fig4)
-        if png4 is not None:
-            st.download_button("Export PNG", data=png4, file_name="08_rotation_ladder.png", mime="image/png", key="dl_rot")
+        _plot(fig4, "rotation")
+        _png_export(fig4, "08_rotation_ladder.png", "rot")
     else:
         st.info("Chart data could not be loaded. Try \"Use FRED-only for final chart\" if Yahoo fails.")
 
@@ -1144,22 +993,22 @@ with tab_fiscal:
     _int_pct = fiscal_df["INTEREST_PCT_GDP"].dropna() if not fiscal_df.empty and "INTEREST_PCT_GDP" in fiscal_df.columns else pd.Series(dtype=float)
     _fiscal_inputs = []
     if not _def_pct.empty:
-        _fiscal_inputs.append(("Annual Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%", _roc_1y(_def_pct, 1), True))  # annual
+        _fiscal_inputs.append(("Annual Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%", _roc_1y(_def_pct), True))  # annual
     if not _debt_pct.empty:
-        _fiscal_inputs.append(("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%", _roc_1y(_debt_pct, 1), True))  # annual
+        _fiscal_inputs.append(("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%", _roc_1y(_debt_pct), True))  # annual
     if not _net_int.empty:
-        _fiscal_inputs.append(("Net Interest ($B)", f"{_net_int.iloc[-1]:.1f}", _roc_1y(_net_int, 4), True))  # quarterly
+        _fiscal_inputs.append(("Net Interest ($B)", f"{_net_int.iloc[-1]:.1f}", _roc_1y(_net_int), True))  # quarterly
     if not _int_pct.empty:
-        _fiscal_inputs.append(("Interest % GDP", f"{_int_pct.iloc[-1]:.2f}%", _roc_1y(_int_pct, 4), True))  # quarterly
+        _fiscal_inputs.append(("Interest % GDP", f"{_int_pct.iloc[-1]:.2f}%", _roc_1y(_int_pct), True))  # quarterly
     _model_input_cards(_fiscal_inputs)
     st.markdown("#### Fiscal Snapshot")
     f1, f2, f3 = st.columns(3)
     with f1:
-        st.metric("Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%" if not _def_pct.empty else "—", "")
+        st.metric("Deficit % GDP", f"{_def_pct.iloc[-1]:.2f}%" if not _def_pct.empty else "—")
     with f2:
-        st.metric("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%" if not _debt_pct.empty else "—", "")
+        st.metric("Debt-to-GDP", f"{_debt_pct.iloc[-1]:.1f}%" if not _debt_pct.empty else "—")
     with f3:
-        st.metric("Interest Burden", f"{_int_pct.iloc[-1]:.2f}%" if not _int_pct.empty else "—", "% of GDP")
+        _metric_note("Interest Burden", f"{_int_pct.iloc[-1]:.2f}%" if not _int_pct.empty else "—", "% of GDP")
     st.divider()
 
     st.header("1. Annual Deficit (% of GDP)")
@@ -1169,7 +1018,7 @@ with tab_fiscal:
     )
     fig_deficit = build_deficit_pct_gdp_chart(fiscal_df, show_event_markers=show_event_markers)
     if fig_deficit is not None:
-        st.plotly_chart(fig_deficit, width="stretch", key="fiscal_deficit")
+        _plot(fig_deficit, "fiscal_deficit")
     else:
         st.info("Not enough fiscal data. Check FRED series FYFSGDA188S (Surplus/Deficit as % GDP).")
 
@@ -1180,7 +1029,7 @@ with tab_fiscal:
     )
     fig_debt = build_debt_to_gdp_chart(fiscal_df, show_event_markers=show_event_markers)
     if fig_debt is not None:
-        st.plotly_chart(fig_debt, width="stretch", key="fiscal_debt")
+        _plot(fig_debt, "fiscal_debt")
     else:
         st.info("Not enough fiscal data. Check FRED series FYGFDPUN (Debt % GDP).")
 
@@ -1191,54 +1040,26 @@ with tab_fiscal:
     )
     fig_interest = build_interest_burden_chart(fiscal_df, show_event_markers=show_event_markers)
     if fig_interest is not None:
-        st.plotly_chart(fig_interest, width="stretch", key="fiscal_interest")
+        _plot(fig_interest, "fiscal_interest")
     else:
         st.info("Not enough fiscal data. Check FRED series B091RC1Q027SBEA (Net interest) and GDP.")
 
-# ----- Generate PDF (all 3 tabs + Executive Summary + Macro Radar) -----
+# ----- Generate PDF (Executive Summary + Macro Radar) -----
 if pdf_available() and build_dashboard_pdf:
     def _pdf_export_fn(fig):
         if fig is None:
             return None
-        png, _ = _try_export_png(_fig_for_pdf(fig))
+        png, _ = _png_from_json(_fig_for_pdf(fig).to_json())
         return png
 
     try:
-        _pdf_sections_full = _build_pdf_sections(
-            lookback=lookback,
-            show_event_markers=show_event_markers,
-            show_10y_3m_lines=show_10y_3m_lines,
-            show_market_overlay=show_market_overlay,
-            oil_log_scale=oil_log_scale,
-            oil_show_yoy=oil_show_yoy,
-            oil_show_cpi=oil_show_cpi,
-            btc_log_scale=btc_log_scale,
-            btc_show_liquidity=btc_show_liquidity,
-            btc_show_real_yield=btc_show_real_yield,
-            btc_rainbow_k=btc_rainbow_k,
-            spx_log_scale=spx_log_scale,
-            use_fred_only_last_chart=use_fred_only_last_chart,
-            val_df=val_df,
-            risk_df=risk_df,
-            yield_df=yield_df,
-            liquidity_df=liquidity_df,
-            rot_df=rot_df,
-            oil_df=oil_df,
-            btc_series=btc_series,
-            real_yield_series=real_yield_series,
-            ladder_df=ladder_df,
-            overlay_val=overlay_val,
-            overlay_risk=overlay_risk,
-            thermo_series=thermo_series,
-            liquidity_yoy_series=liquidity_yoy_series,
-            cpi_series=cpi_series,
+        # PDF = summary only (no chart images), so it always works with zero setup
+        summary = _build_pdf_summary(
             ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
             macro_drivers=macro_drivers_list if include_macro_drivers else [],
         )
-        # PDF = summary only (no chart images), so it always works with zero setup
-        _pdf_sections = _pdf_sections_full[:1] if _pdf_sections_full else []
         pdf_bytes = build_dashboard_pdf(
-            _pdf_sections,
+            [summary],
             report_date=date.today().isoformat(),
             lookback_label=lookback,
             data_sources="FRED, Yahoo Finance",
@@ -1257,7 +1078,7 @@ if pdf_available() and build_dashboard_pdf:
 
 st.markdown("""
 <div class="footer">
-    Private Macro Dashboard · <a href="https://github.com" target="_blank" rel="noopener">GitHub</a> · 
+    Private Macro Dashboard · <a href="https://github.com/CtrlAltDelegate/macro-dashboard" target="_blank" rel="noopener">GitHub</a> · 
     FRED + Yahoo Finance · Export PNG for newsletter
 </div>
 """, unsafe_allow_html=True)

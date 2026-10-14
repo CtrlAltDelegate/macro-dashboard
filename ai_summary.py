@@ -6,15 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import date
 from typing import Any
 
-try:
-    import config
-    _CONFIG_AVAILABLE = True
-except ImportError:
-    _CONFIG_AVAILABLE = False
+import config
 
 # Token guardrails
 MAX_INPUT_TOKENS = 1800
@@ -89,12 +84,7 @@ def build_macro_signal_payload(
 
 
 def _read_cache(report_date: str, key: str) -> dict | None:
-    if not _CONFIG_AVAILABLE:
-        return None
-    cache_dir = getattr(config, "CACHE_DIR", None)
-    if not cache_dir:
-        return None
-    path = cache_dir / "ai_summary" / f"{report_date}_{key}.json"
+    path = config.CACHE_DIR / "ai_summary" / f"{report_date}_{key}.json"
     if not path.exists():
         return None
     try:
@@ -105,12 +95,7 @@ def _read_cache(report_date: str, key: str) -> dict | None:
 
 
 def _write_cache(report_date: str, key: str, data: dict) -> None:
-    if not _CONFIG_AVAILABLE:
-        return
-    cache_dir = getattr(config, "CACHE_DIR", None)
-    if not cache_dir:
-        return
-    out_dir = cache_dir / "ai_summary"
+    out_dir = config.CACHE_DIR / "ai_summary"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{report_date}_{key}.json"
     try:
@@ -139,18 +124,7 @@ def generate_ai_summary(
         if cached:
             return cached
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        try:
-            import streamlit as _st
-            if hasattr(_st, "secrets"):
-                api_key = getattr(_st.secrets, "OPENAI_API_KEY", "") or ""
-                if not api_key and "OPENAI_API_KEY" in _st.secrets:
-                    api_key = str(_st.secrets["OPENAI_API_KEY"] or "")
-                if not api_key and hasattr(_st.secrets, "openai"):
-                    api_key = str(getattr(_st.secrets.openai, "OPENAI_API_KEY", "") or "")
-        except Exception:
-            pass
+    api_key = config.get_secret("OPENAI_API_KEY")
     if not api_key:
         return None  # No key: caller can show "add OPENAI_API_KEY to Secrets"
 
@@ -220,13 +194,4 @@ Respond with exactly this JSON (no other text):
 
 def ai_summary_available() -> bool:
     """True if OPENAI_API_KEY is set and we can attempt to generate a summary."""
-    key = os.getenv("OPENAI_API_KEY", "")
-    if key:
-        return True
-    try:
-        import streamlit as _st
-        if hasattr(_st, "secrets") and getattr(_st.secrets, "get", lambda k: None)("OPENAI_API_KEY"):
-            return True
-    except Exception:
-        pass
-    return False
+    return bool(config.get_secret("OPENAI_API_KEY"))

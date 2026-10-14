@@ -1,5 +1,5 @@
 """
-Build Plotly figures for all four dashboard charts. Shared by app.py and refresh.py.
+Build Plotly figures for the dashboard charts. Shared by app.py and refresh.py.
 """
 from __future__ import annotations
 
@@ -13,25 +13,29 @@ from models import (
     compute_macro_risk_composite,
     compute_macro_risk_roc,
     compute_risk_thermostat,
-    prepare_rotation_curves,
     prepare_rotation_zscore,
     prepare_regime_curves,
+    change_over,
+    compute_net_liquidity,
+    RISK_ZONES,
+    risk_zone,
+    risk_zone_index,
 )
 from models.btc_metrics import btc_rainbow_regression
 
-# Risk band thresholds and labels (0–100 scale)
-THERMO_BANDS = [(0, 20, "Very Low Risk"), (20, 40, "Low Risk"), (40, 60, "Moderate Risk"), (60, 80, "High Risk"), (80, 100, "Extreme Risk")]
-THERMO_HLINES = [20, 40, 60, 80]
-
-# Regimes & Bands tab: 6 zones (user-specified)
-REGIME_BANDS_6 = [
-    (0, 20, "Very Low Risk", "rgba(63, 185, 80, 0.22)"),
-    (20, 40, "Low Risk", "rgba(88, 166, 255, 0.2)"),
-    (40, 60, "Moderate Risk", "rgba(210, 153, 34, 0.25)"),
-    (60, 75, "High Risk", "rgba(248, 140, 60, 0.28)"),
-    (75, 90, "Very High Risk", "rgba(248, 81, 73, 0.3)"),
-    (90, 100, "Extreme Risk", "rgba(139, 50, 50, 0.35)"),
+# Risk zone boundaries (from models.thermostat.RISK_ZONES) and a shading color per zone
+THERMO_HLINES = [lo for lo, _hi, _label in RISK_ZONES[1:]]
+ZONE_COLORS = [
+    "rgba(63, 185, 80, 0.22)",   # Very Low
+    "rgba(88, 166, 255, 0.2)",   # Low
+    "rgba(210, 153, 34, 0.25)",  # Moderate
+    "rgba(248, 140, 60, 0.28)",  # High
+    "rgba(248, 81, 73, 0.3)",    # Very High
+    "rgba(139, 50, 50, 0.35)",   # Extreme
 ]
+assert len(ZONE_COLORS) == len(RISK_ZONES)
+
+RECESSION_FILL = "rgba(139, 148, 158, 0.16)"
 
 OVERLAY_COLOR = "rgba(140, 140, 140, 0.65)"
 OVERLAY_LINE = dict(color=OVERLAY_COLOR, width=1.2, dash="dash")
@@ -151,12 +155,9 @@ def compute_radar_pillar_scores(
 
     # Inflation: CPI YoY
     if not risk_df.empty and "INFLATION" in risk_df.columns:
-        cpi = risk_df["INFLATION"].dropna()
-        if len(cpi) >= 13:
-            cpi_yoy = ((cpi / cpi.shift(12)) - 1) * 100
-            cpi_yoy = cpi_yoy.dropna()
-            if not cpi_yoy.empty:
-                scores["Inflation"] = _score_inflation_yoy(float(cpi_yoy.iloc[-1]))
+        cpi_yoy = change_over(risk_df["INFLATION"])
+        if not cpi_yoy.empty:
+            scores["Inflation"] = _score_inflation_yoy(float(cpi_yoy.iloc[-1]))
 
     # Labor: Unemployment
     if not risk_df.empty and "UNEMPLOYMENT" in risk_df.columns:
@@ -252,6 +253,21 @@ def _add_event_markers(fig: go.Figure, enabled: bool) -> None:
         )
 
 
+def add_recession_shading(fig: go.Figure | None, periods: list[tuple]) -> go.Figure | None:
+    """Shade NBER recessions (from data.fetch_recession_periods) that overlap the figure's dates."""
+    if fig is None or not periods:
+        return fig
+    xs = [x for tr in fig.data if getattr(tr, "x", None) is not None and len(tr.x) for x in (tr.x[0], tr.x[-1])]
+    if not xs:
+        return fig
+    lo, hi = pd.Timestamp(min(xs)), pd.Timestamp(max(xs))
+    for start, end in periods:
+        if end < lo or start > hi:
+            continue
+        fig.add_vrect(x0=max(start, lo), x1=min(end, hi), fillcolor=RECESSION_FILL, line_width=0, layer="below")
+    return fig
+
+
 def _add_market_overlay(fig: go.Figure, overlay_series: pd.Series, use_secondary_y: bool = False) -> None:
     """Add optional S&P 500 overlay (normalized to 100 at start). Light gray, dashed, thin.
     If use_secondary_y, add overlay on y2 and configure layout.yaxis2."""
@@ -311,14 +327,18 @@ def build_macro_risk_chart(
     risk_df: pd.DataFrame,
     overlay_series: pd.Series | None = None,
     show_event_markers: bool = False,
+    composite: pd.Series | None = None,
 ) -> go.Figure | None:
+    """Economic Risk Index. Pass `composite` (from compute_risk_model) to use warmed-up values."""
     if risk_df.empty or len(risk_df) < 60:
         return None
-    raw = compute_macro_risk_composite(risk_df)
-    roc = compute_macro_risk_roc(raw, period=21)
+    raw = composite if composite is not None else compute_macro_risk_composite(risk_df)
+    if raw.empty:
+        return None
+    roc = compute_macro_risk_roc(raw)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=raw.index, y=raw.values, mode="lines", name="Raw composite", line=dict(color="#58a6ff", width=2)))
-    fig.add_trace(go.Scatter(x=roc.index, y=roc.values, mode="lines", name="ROC (21-period)", line=dict(color="#d29922", width=1.5)))
+    fig.add_trace(go.Scatter(x=roc.index, y=roc.values, mode="lines", name="ROC (1-month)", line=dict(color="#d29922", width=1.5)))
     _add_market_overlay(fig, overlay_series, use_secondary_y=True)
     _add_event_markers(fig, show_event_markers)
     apply_theme(fig, "Economic Risk Index — Raw & ROC", height=380)
@@ -339,9 +359,8 @@ def build_yield_curve_chart(
     if spread.empty or len(spread) < 20:
         return None
     smoothed = spread.rolling(window=20, min_periods=1).mean()
-    # 90-day momentum (ROC): spread - spread.shift(90)
-    roc_90d = spread - spread.shift(90)
-    roc_90d = roc_90d.dropna()
+    # 90-day momentum: spread change vs. 90 calendar days earlier
+    roc_90d = change_over(spread, pd.Timedelta(days=90), pct=False)
     # Raw 10Y and 3M aligned to smoothed index (for hover tooltip)
     d10 = yield_df["DGS10"].reindex(smoothed.index).ffill().bfill()
     d3 = yield_df["DGS3MO"].reindex(smoothed.index).ffill().bfill()
@@ -375,6 +394,14 @@ def build_yield_curve_chart(
             "Spread: %{y:.2f}%<extra></extra>"
         ),
     ))
+    if "T10Y2Y" in yield_df.columns:
+        t10y2y = yield_df["T10Y2Y"].dropna()
+        if not t10y2y.empty:
+            fig.add_trace(go.Scatter(
+                x=t10y2y.index, y=t10y2y.values, mode="lines", name="10Y – 2Y",
+                line=dict(color="#3fb950", width=1.5),
+                hovertemplate="Date: %{x|%Y-%m-%d}<br>10Y – 2Y: %{y:.2f}%<extra></extra>",
+            ))
     if not roc_90d.empty:
         fig.add_trace(go.Scatter(
             x=roc_90d.index,
@@ -408,7 +435,7 @@ def build_yield_curve_chart(
     fig.add_hline(y=0, line_dash="dash", line_color="rgba(248, 81, 73, 0.9)", line_width=1.2)
     fig.add_hline(y=1.5, line_dash="dash", line_color="rgba(63, 185, 80, 0.8)", line_width=1)
     _add_event_markers(fig, show_event_markers)
-    apply_theme(fig, "Yield Curve (10Y – 3M) + Momentum", height=380)
+    apply_theme(fig, "Yield Curve (10Y – 3M, 10Y – 2Y) + Momentum", height=380)
     return fig
 
 
@@ -428,7 +455,7 @@ def build_liquidity_chart(
     if yoy.empty:
         return None
     walcl_aligned = walcl.reindex(yoy.index).ffill().bfill()
-    customdata = list(zip(walcl_aligned.values / 1e9, yoy.values))  # WALCL in billions for readability
+    customdata = list(zip(walcl_aligned.values / 1e3, yoy.values))  # WALCL is in millions → billions
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=yoy.index,
@@ -449,6 +476,31 @@ def build_liquidity_chart(
     return fig
 
 
+def build_net_liquidity_chart(
+    liquidity_df: pd.DataFrame,
+    show_event_markers: bool = False,
+) -> go.Figure | None:
+    """Net liquidity (WALCL − TGA − RRP) vs. the Fed balance sheet, in trillions USD."""
+    net = compute_net_liquidity(liquidity_df)
+    if len(net) < 10:
+        return None
+    walcl = liquidity_df["WALCL"].dropna().reindex(net.index)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=net.index, y=net.values / 1e6, mode="lines", name="Net liquidity",
+        line=dict(color="#3fb950", width=2.5),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Net liquidity: $%{y:.2f}T<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=walcl.index, y=walcl.values / 1e6, mode="lines", name="Fed balance sheet (WALCL)",
+        line=OVERLAY_LINE,
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>WALCL: $%{y:.2f}T<extra></extra>",
+    ))
+    _add_event_markers(fig, show_event_markers)
+    apply_theme(fig, "Net Liquidity (WALCL − TGA − RRP, $T)", height=380)
+    return fig
+
+
 def build_fci_chart(
     risk_df: pd.DataFrame,
     show_ma: bool = True,
@@ -458,7 +510,7 @@ def build_fci_chart(
     if risk_df.empty or "CREDIT_TIGHTENING" not in risk_df.columns:
         return None
     nfci = risk_df["CREDIT_TIGHTENING"].dropna()
-    if nfci.empty or len(nfci) < 20:
+    if len(nfci) < 4:
         return None
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -466,11 +518,12 @@ def build_fci_chart(
         name="NFCI", line=dict(color="#58a6ff", width=2),
         hovertemplate="Date: %{x|%Y-%m-%d}<br>NFCI: %{y:.3f}<extra></extra>",
     ))
-    if show_ma and len(nfci) >= 20:
-        ma = nfci.rolling(20, min_periods=1).mean()
+    if show_ma:
+        # NFCI is weekly; 4-week time window (matches the old 20-business-day MA on daily-filled data)
+        ma = nfci.rolling("28D", min_periods=1).mean()
         fig.add_trace(go.Scatter(
             x=ma.index, y=ma.values, mode="lines",
-            name="NFCI (20-period MA)", line=dict(color="#d29922", width=1.5, dash="dash"),
+            name="NFCI (4-week MA)", line=dict(color="#d29922", width=1.5, dash="dash"),
             hovertemplate="Date: %{x|%Y-%m-%d}<br>NFCI MA: %{y:.3f}<extra></extra>",
         ))
     fig.add_hline(y=0, line_dash="dash", line_color="rgba(139, 148, 158, 0.9)", line_width=1.2)
@@ -570,11 +623,13 @@ def build_thermostat_chart(
     risk_df: pd.DataFrame,
     overlay_series: pd.Series | None = None,
     show_event_markers: bool = False,
+    thermo: pd.Series | None = None,
 ) -> go.Figure | None:
+    """Market Risk Level (0–100). Pass `thermo` if already computed to skip recomputing it."""
     if risk_df.empty or len(risk_df) < 60:
         return None
-    raw = compute_macro_risk_composite(risk_df)
-    thermo = compute_risk_thermostat(raw)
+    if thermo is None:
+        thermo = compute_risk_thermostat(compute_macro_risk_composite(risk_df))
     if thermo.empty:
         return None
     fig = go.Figure()
@@ -613,10 +668,10 @@ def build_oil_chart(
     oil_df: pd.DataFrame,
     log_scale: bool = False,
     show_yoy: bool = False,
-    cpi_yoy_series: pd.Series | None = None,
+    cpi_series: pd.Series | None = None,
     show_event_markers: bool = False,
 ) -> go.Figure | None:
-    """WTI spot oil (DCOILWTICO). Optional: log scale, YoY % line, CPI YoY overlay."""
+    """WTI spot oil (DCOILWTICO). Optional: log scale, YoY % line, CPI YoY overlay (pass CPI levels)."""
     if oil_df.empty or "DCOILWTICO" not in oil_df.columns:
         return None
     price = oil_df["DCOILWTICO"].dropna()
@@ -628,9 +683,8 @@ def build_oil_chart(
         line=dict(color="#d4a017", width=2),
         hovertemplate="Date: %{x|%Y-%m-%d}<br>WTI: $%{y:,.2f}<extra></extra>",
     ))
-    if show_yoy and len(price) >= 253:
-        yoy = ((price / price.shift(252)) - 1) * 100
-        yoy = yoy.dropna()
+    if show_yoy:
+        yoy = change_over(price)
         if not yoy.empty:
             fig.add_trace(go.Scatter(
                 x=yoy.index, y=yoy.values, mode="lines", name="Oil YoY %",
@@ -639,9 +693,8 @@ def build_oil_chart(
                 hovertemplate="Date: %{x|%Y-%m-%d}<br>YoY: %{y:.1f}%<extra></extra>",
             ))
             fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False, zeroline=True, zerolinecolor="rgba(139,148,158,0.5)", tickfont=dict(color=AXIS_LIGHT, size=11), title=None))
-    if cpi_yoy_series is not None and not cpi_yoy_series.empty and len(cpi_yoy_series) >= 13:
-        cpi_yoy = ((cpi_yoy_series / cpi_yoy_series.shift(12)) - 1) * 100
-        cpi_yoy = cpi_yoy.dropna()
+    if cpi_series is not None and not cpi_series.empty:
+        cpi_yoy = change_over(cpi_series)
         common = cpi_yoy.index.intersection(price.index)
         if len(common) >= 10:
             cpi_aligned = cpi_yoy.reindex(price.index).ffill().bfill()
@@ -680,14 +733,9 @@ def build_bitcoin_chart(
         hovertemplate="Date: %{x|%Y-%m-%d}<br>BTC: $%{y:,.0f}<extra></extra>",
     ))
     secondary_added = False
-    # liquidity_yoy_series: pre-computed WALCL YoY % (or raw WALCL; we compute YoY if len >= 53)
+    # liquidity_yoy_series: pre-computed WALCL YoY %
     if liquidity_yoy_series is not None and not liquidity_yoy_series.empty:
-        ly = liquidity_yoy_series
-        if len(ly) >= 53 and hasattr(ly, "shift"):
-            yoy = ((ly / ly.shift(52)) - 1) * 100
-            yoy = yoy.dropna()
-        else:
-            yoy = ly.dropna()
+        yoy = liquidity_yoy_series.dropna()
         if len(yoy) >= 5:
             yoy_aligned = yoy.reindex(price.index).ffill().bfill()
             if yoy_aligned.notna().sum() >= 5:
@@ -715,22 +763,6 @@ def build_bitcoin_chart(
     return fig
 
 
-def _zone_index(risk_val: float) -> int:
-    """Return 0..5 for REGIME_BANDS_6."""
-    for i, (lo, hi, _label, _color) in enumerate(REGIME_BANDS_6):
-        if lo <= risk_val < hi:
-            return i
-    if risk_val >= 100:
-        return 5
-    return 0
-
-
-def _zone_label(risk_val: float) -> str:
-    """Return zone label (e.g. 'Low Risk') for risk score 0–100."""
-    idx = _zone_index(risk_val)
-    return REGIME_BANDS_6[idx][2]
-
-
 def build_bands_chart(
     price_series: pd.Series,
     risk_score_series: pd.Series,
@@ -747,7 +779,7 @@ def build_bands_chart(
     risk_aligned = risk_score_series.reindex(price.index).ffill().bfill().dropna()
     if risk_aligned.empty:
         return None
-    zones = risk_aligned.apply(_zone_index)
+    zones = risk_aligned.apply(risk_zone_index)
     shapes = []
     i = 0
     while i < len(zones):
@@ -755,7 +787,7 @@ def build_bands_chart(
         j = i
         while j < len(zones) and zones.iloc[j] == z:
             j += 1
-        _, _, _label, color = REGIME_BANDS_6[z]
+        color = ZONE_COLORS[z]
         x0 = zones.index[i]
         x1 = zones.index[j - 1] if j > i else zones.index[i]
         shapes.append(dict(
@@ -768,7 +800,7 @@ def build_bands_chart(
         ))
         i = j
     risk_vals = risk_aligned.reindex(price.index).ffill().bfill()
-    zone_labels = risk_vals.apply(_zone_label)
+    zone_labels = risk_vals.apply(risk_zone)
     customdata = np.column_stack([risk_vals.values, np.asarray(zone_labels)])
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -783,14 +815,6 @@ def build_bands_chart(
     if log_scale:
         fig.update_yaxes(type="log")
     return fig
-
-
-def build_rotation_chart(rot_df: pd.DataFrame) -> go.Figure | None:
-    """Build rotation chart from Yahoo ratio data. Returns None if empty."""
-    if rot_df.empty:
-        return None
-    curves = prepare_rotation_curves(rot_df)
-    return build_curves_chart(curves, title="Rotation — Relative strength (100 = start)")
 
 
 # Rainbow: fill between adjacent k-bands; gradient blue (low k) → red (high k)
@@ -915,26 +939,30 @@ def build_all_charts(
     risk_df: pd.DataFrame,
     yield_df: pd.DataFrame,
     liquidity_df: pd.DataFrame,
-    rot_df: pd.DataFrame,
+    ladder_df: pd.DataFrame,
     overlay_valuation: pd.Series | None = None,
     overlay_risk: pd.Series | None = None,
     show_10y_3m: bool = False,
     show_event_markers: bool = False,
     use_fred_only_last: bool = False,
+    composite: pd.Series | None = None,
+    thermo: pd.Series | None = None,
 ):
-    """Return (fig_liquidity, fig_valuation, fig_macro_risk, fig_yield, fig_fci, fig_credit, fig_thermo, fig_last). Any can be None."""
-    if use_fred_only_last or rot_df.empty:
+    """Return (fig_liquidity, fig_valuation, fig_macro_risk, fig_yield, fig_fci, fig_credit, fig_thermo, fig_last,
+    fig_net_liquidity). Any can be None."""
+    if use_fred_only_last or ladder_df.empty:
         regime_curves = prepare_regime_curves(val_df, risk_df)
         fig_last = build_curves_chart(regime_curves, title="Macro Regime (FRED) — 100 = start")
     else:
-        fig_last = build_rotation_chart(rot_df)
+        fig_last = build_rotation_ladder_chart(ladder_df)
     return (
         build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers),
         build_valuation_chart(val_df, overlay_series=overlay_valuation, show_event_markers=show_event_markers),
-        build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers),
+        build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, composite=composite),
         build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m, show_event_markers=show_event_markers),
         build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers),
         build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers),
-        build_thermostat_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers),
+        build_thermostat_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, thermo=thermo),
         fig_last,
+        build_net_liquidity_chart(liquidity_df, show_event_markers=show_event_markers),
     )
