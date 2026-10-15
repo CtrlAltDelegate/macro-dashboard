@@ -18,8 +18,7 @@ from models import (
     change_over,
     compute_net_liquidity,
     RISK_ZONES,
-    risk_zone,
-    risk_zone_index,
+    stable_zone_index,
 )
 from models.btc_metrics import btc_rainbow_regression
 
@@ -36,6 +35,13 @@ ZONE_COLORS = [
 assert len(ZONE_COLORS) == len(RISK_ZONES)
 
 RECESSION_FILL = "rgba(139, 148, 158, 0.16)"
+
+
+def _from(series: pd.Series, display_start: str | None) -> pd.Series:
+    """Rows on/after display_start (None = all). Used where extra history was fetched for YoY warm-up."""
+    if not display_start or series.empty:
+        return series
+    return series[series.index >= pd.Timestamp(display_start)]
 
 OVERLAY_COLOR = "rgba(140, 140, 140, 0.65)"
 OVERLAY_LINE = dict(color=OVERLAY_COLOR, width=1.2, dash="dash")
@@ -442,16 +448,14 @@ def build_yield_curve_chart(
 def build_liquidity_chart(
     liquidity_df: pd.DataFrame,
     show_event_markers: bool = False,
+    display_start: str | None = None,
 ) -> go.Figure | None:
-    """Build Global Liquidity chart: Fed balance sheet (WALCL) year-over-year % change."""
+    """Build Global Liquidity chart: Fed balance sheet (WALCL) year-over-year % change.
+    Pass data starting a year before display_start so the YoY line covers the whole window."""
     if liquidity_df.empty or "WALCL" not in liquidity_df.columns:
         return None
     walcl = liquidity_df["WALCL"].dropna()
-    if len(walcl) < 53:  # need 52+ points for YoY
-        return None
-    # LiquidityYoY = ((WALCL / WALCL.shift(52)) - 1) * 100 (weekly → 52 weeks = 1 year)
-    yoy = ((walcl / walcl.shift(52)) - 1) * 100
-    yoy = yoy.dropna()
+    yoy = _from(change_over(walcl), display_start)
     if yoy.empty:
         return None
     walcl_aligned = walcl.reindex(yoy.index).ffill().bfill()
@@ -479,9 +483,10 @@ def build_liquidity_chart(
 def build_net_liquidity_chart(
     liquidity_df: pd.DataFrame,
     show_event_markers: bool = False,
+    display_start: str | None = None,
 ) -> go.Figure | None:
     """Net liquidity (WALCL − TGA − RRP) vs. the Fed balance sheet, in trillions USD."""
-    net = compute_net_liquidity(liquidity_df)
+    net = _from(compute_net_liquidity(liquidity_df), display_start)
     if len(net) < 10:
         return None
     walcl = liquidity_df["WALCL"].dropna().reindex(net.index)
@@ -535,8 +540,9 @@ def build_fci_chart(
 def build_credit_spreads_chart(
     risk_df: pd.DataFrame,
     show_event_markers: bool = False,
+    ig_series: pd.Series | None = None,
 ) -> go.Figure | None:
-    """Credit Spreads — ICE BofA US High Yield OAS. Rising = stress increasing."""
+    """Credit Spreads — ICE BofA US High Yield OAS (+ investment-grade OAS if given). Rising = stress increasing."""
     if risk_df.empty or "CREDIT_STRESS" not in risk_df.columns:
         return None
     hy = risk_df["CREDIT_STRESS"].dropna()
@@ -548,10 +554,19 @@ def build_credit_spreads_chart(
         name="HY OAS %", line=dict(color="#f85149", width=2),
         hovertemplate="Date: %{x|%Y-%m-%d}<br>Spread: %{y:.2f}%<extra></extra>",
     ))
-    for y, label in [(3, "Calm"), (5, "Stress rising"), (7, "High stress")]:
+    if ig_series is not None:
+        ig = ig_series.dropna()
+        ig = ig[ig.index >= hy.index[0]]
+        if not ig.empty:
+            fig.add_trace(go.Scatter(
+                x=ig.index, y=ig.values, mode="lines",
+                name="IG OAS %", line=dict(color="#58a6ff", width=1.5),
+                hovertemplate="Date: %{x|%Y-%m-%d}<br>IG spread: %{y:.2f}%<extra></extra>",
+            ))
+    for y, label in [(3, "Calm"), (5, "Stress rising"), (7, "High stress")]:  # HY reference levels
         fig.add_hline(y=y, line_dash="dash", line_color="rgba(139, 148, 158, 0.7)", line_width=1)
     _add_event_markers(fig, show_event_markers)
-    apply_theme(fig, "Credit Spreads (High Yield OAS)", height=380)
+    apply_theme(fig, "Credit Spreads (High Yield & Investment Grade OAS)", height=380)
     return fig
 
 
@@ -779,7 +794,7 @@ def build_bands_chart(
     risk_aligned = risk_score_series.reindex(price.index).ffill().bfill().dropna()
     if risk_aligned.empty:
         return None
-    zones = risk_aligned.apply(risk_zone_index)
+    zones = stable_zone_index(risk_aligned)  # ignores sub-2-week blips across a zone boundary
     shapes = []
     i = 0
     while i < len(zones):
@@ -800,7 +815,7 @@ def build_bands_chart(
         ))
         i = j
     risk_vals = risk_aligned.reindex(price.index).ffill().bfill()
-    zone_labels = risk_vals.apply(risk_zone)
+    zone_labels = zones.reindex(risk_vals.index).ffill().bfill().astype(int).map(lambda z: RISK_ZONES[z][2])
     customdata = np.column_stack([risk_vals.values, np.asarray(zone_labels)])
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -947,6 +962,8 @@ def build_all_charts(
     use_fred_only_last: bool = False,
     composite: pd.Series | None = None,
     thermo: pd.Series | None = None,
+    display_start: str | None = None,
+    ig_series: pd.Series | None = None,
 ):
     """Return (fig_liquidity, fig_valuation, fig_macro_risk, fig_yield, fig_fci, fig_credit, fig_thermo, fig_last,
     fig_net_liquidity). Any can be None."""
@@ -956,13 +973,13 @@ def build_all_charts(
     else:
         fig_last = build_rotation_ladder_chart(ladder_df)
     return (
-        build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers),
+        build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers, display_start=display_start),
         build_valuation_chart(val_df, overlay_series=overlay_valuation, show_event_markers=show_event_markers),
         build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, composite=composite),
         build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m, show_event_markers=show_event_markers),
         build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers),
-        build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers),
+        build_credit_spreads_chart(risk_df, show_event_markers=show_event_markers, ig_series=ig_series),
         build_thermostat_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, thermo=thermo),
         fig_last,
-        build_net_liquidity_chart(liquidity_df, show_event_markers=show_event_markers),
+        build_net_liquidity_chart(liquidity_df, show_event_markers=show_event_markers, display_start=display_start),
     )

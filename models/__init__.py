@@ -6,7 +6,7 @@ from .macro_risk import (
     compute_risk_model,
     warmup_start,
 )
-from .thermostat import compute_risk_thermostat, RISK_ZONES, risk_zone, risk_zone_index
+from .thermostat import compute_risk_thermostat, RISK_ZONES, risk_zone, risk_zone_index, stable_zone_index
 from .rotation import prepare_rotation_curves, prepare_rotation_zscore
 from .regime import prepare_regime_curves
 from .timeseries import change_over, latest_change
@@ -23,6 +23,7 @@ __all__ = [
     "RISK_ZONES",
     "risk_zone",
     "risk_zone_index",
+    "stable_zone_index",
     "prepare_rotation_curves",
     "prepare_rotation_zscore",
     "prepare_regime_curves",

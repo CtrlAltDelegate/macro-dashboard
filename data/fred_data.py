@@ -4,6 +4,7 @@ FRED data fetching. Requires FRED_API_KEY in environment (free key from FRED).
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from fredapi import Fred
@@ -11,6 +12,11 @@ from fredapi import Fred
 import config
 
 log = logging.getLogger(__name__)
+
+
+def _empty() -> pd.Series:
+    """Placeholder for a missing series. Date-indexed, so merging it doesn't turn a frame's index into objects."""
+    return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
 
 
 def _get_fred_client() -> Fred:
@@ -34,7 +40,7 @@ def _fetch_or_empty(client: Fred, series_id: str, observation_start: str | None)
         return client.get_series(series_id, observation_start=observation_start).ffill().dropna()
     except Exception as e:
         log.warning("FRED series %s failed: %s", series_id, e)
-        return pd.Series(dtype=float)
+        return _empty()
 
 
 def _fetch_frame(ids: dict[str, str], observation_start: str | None) -> pd.DataFrame:
@@ -45,13 +51,15 @@ def _fetch_frame(ids: dict[str, str], observation_start: str | None) -> pd.DataF
     columns forward-fill themselves (e.g. compute_macro_risk_composite, the valuation index).
     """
     client = _get_fred_client()
-    out = {name: _fetch_or_empty(client, sid, observation_start) for name, sid in ids.items()}
-    return pd.DataFrame(out).dropna(how="all")
+    # A few requests at a time: faster cold loads while staying well under FRED's rate limit
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {name: pool.submit(_fetch_or_empty, client, sid, observation_start) for name, sid in ids.items()}
+    return pd.DataFrame({name: f.result() for name, f in futures.items()}).dropna(how="all")
 
 
 def _fetch_single(series_id: str, observation_start: str | None) -> pd.Series:
     if not config.FRED_API_KEY:
-        return pd.Series(dtype=float)
+        return _empty()
     return _fetch_or_empty(_get_fred_client(), series_id, observation_start)
 
 
@@ -127,10 +135,9 @@ def fetch_fiscal_data(observation_start: str | None = None) -> pd.DataFrame:
 
 
 def fetch_model_input_series(observation_start: str | None = None) -> dict[str, pd.Series]:
-    """Fetch extra series for Model Inputs: 2Y yield, Core CPI, Initial Claims.
-    Returns dict with keys DGS2, CPILFESL, ICSA (each value a Series or empty)."""
-    return {
-        "DGS2": _fetch_single(config.FRED_DGS2, observation_start),
-        "CPILFESL": _fetch_single(config.FRED_CORE_CPI, observation_start),
-        "ICSA": _fetch_single(config.FRED_INITIAL_CLAIMS, observation_start),
-    }
+    """Fetch the extra Model Inputs series (config.FRED_MODEL_INPUTS).
+    Returns {FRED series ID: Series}, empty Series for any that fail or when there is no key."""
+    if not config.FRED_API_KEY:
+        return {sid: _empty() for sid in config.FRED_MODEL_INPUTS}
+    df = _fetch_frame({sid: sid for sid in config.FRED_MODEL_INPUTS}, observation_start)
+    return {sid: df[sid].dropna() if sid in df.columns else _empty() for sid in config.FRED_MODEL_INPUTS}

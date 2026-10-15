@@ -14,11 +14,11 @@ import pandas as pd
 def compute_net_liquidity(liquidity_df: pd.DataFrame) -> pd.Series:
     """Weekly net liquidity (millions USD). Empty if WALCL or TGA is missing; RRP treated as 0 before it existed."""
     if liquidity_df.empty or not {"WALCL", "TGA"} <= set(liquidity_df.columns):
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     walcl = liquidity_df["WALCL"].dropna()
     tga = liquidity_df["TGA"].dropna()
     if walcl.empty or tga.empty:
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     idx = walcl.index
     tga_on = pd.Series(tga.asof(idx).to_numpy(dtype=float), index=idx)
     if "RRP" in liquidity_df.columns and not liquidity_df["RRP"].dropna().empty:

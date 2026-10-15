@@ -21,6 +21,7 @@ from data import (
     fetch_liquidity_data,
     fetch_rotation_ladder_data,
     fetch_recession_periods,
+    fetch_model_input_series,
 )
 from charts.build import build_all_charts, add_recession_shading
 from models import compute_risk_model, warmup_start
@@ -58,7 +59,10 @@ def run_refresh(lookback: str = "5y") -> int:
         val_df = fetch_valuation_data(observation_start=obs_start)
         risk_full = fetch_macro_risk_data(observation_start=warmup_start(obs_start))
         yield_df = fetch_yield_curve_data(observation_start=obs_start)
-        liquidity_df = fetch_liquidity_data(observation_start=obs_start)
+        # A year of extra history so the YoY line covers the whole window
+        liq_start = (pd.Timestamp(obs_start) - pd.DateOffset(years=1)).date().isoformat() if obs_start else None
+        liquidity_df = fetch_liquidity_data(observation_start=liq_start)
+        ig_series = fetch_model_input_series(observation_start=obs_start).get("BAMLC0A0CM")  # optional; empty on failure
         recessions = fetch_recession_periods(observation_start=obs_start)
     except Exception as e:
         print(f"FRED fetch failed: {e}", file=sys.stderr)
@@ -77,6 +81,7 @@ def run_refresh(lookback: str = "5y") -> int:
     figs = build_all_charts(
         val_df, risk_df, yield_df, liquidity_df, ladder_df,
         show_event_markers=False, composite=composite, thermo=thermo,
+        display_start=obs_start, ig_series=ig_series,
     )
     for fig in figs:
         add_recession_shading(fig, recessions)

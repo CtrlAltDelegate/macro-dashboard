@@ -126,10 +126,17 @@ FRED_FISCAL = {
     "GDP": "GDP",                       # Quarterly GDP (billions, SAAR) for interest burden
 }
 
-# Model inputs (extra series for Macro tab: 2Y yield, Core CPI, Initial Claims)
-FRED_DGS2 = "DGS2"           # 2-Year Treasury
-FRED_CORE_CPI = "CPILFESL"   # Core CPI (less food and energy)
-FRED_INITIAL_CLAIMS = "ICSA" # Initial Jobless Claims (weekly)
+# Model inputs: extra series for the Macro tab cards (key = FRED series ID)
+FRED_MODEL_INPUTS = {
+    "DGS2": "2-Year Treasury yield",
+    "CPILFESL": "Core CPI (less food and energy)",
+    "ICSA": "Initial jobless claims (weekly)",
+    "SAHMREALTIME": "Sahm rule recession indicator (real-time, pp; >= 0.5 has signaled recessions)",
+    "T10YIE": "10-Year breakeven inflation rate",
+    "BAMLC0A0CM": "ICE BofA US investment-grade corporate OAS",
+    "DTWEXBGS": "Nominal broad U.S. dollar index",
+    "VIXCLS": "CBOE VIX",
+}
 
 # AI interpretation (optional): OpenAI for lightweight summary
 OPENAI_API_KEY = get_secret("OPENAI_API_KEY")

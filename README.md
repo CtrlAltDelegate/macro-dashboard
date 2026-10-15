@@ -6,18 +6,18 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 
 Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headlines and a one-page PDF summary.
 
-- **Macro (Core)** — model-input cards (current value + 1Y change) and seven charts:
+- **Macro (Core)** — model-input cards grouped by theme (rates & inflation, growth & labor, liquidity & credit, market stress), each with its 1Y change and the date of the latest observation. Includes the Sahm rule, 10Y breakeven inflation, IG spread, VIX and the broad dollar. Charts are laid out two per row, with descriptions under "About this chart":
   1. Global Liquidity — Fed balance sheet (WALCL) YoY %, plus **net liquidity** (WALCL − Treasury General Account − reverse repo)
   2. Stock Market Pressure — `((SPX/UNRATE²) × CPI × FEDFUNDS) / M2`, rebased to 100
   3. Economic Risk Index — average of six pillar z-scores (3-year window), each oriented so higher = worse: real GDP growth, 1-year change in unemployment, CPI inflation, NFCI, Fed balance-sheet growth and HY spread; plus its 1-month ROC. Computed with 5 years of extra history so the start of every lookback is warmed up
   4. Yield Curve (10Y – 3M and 10Y – 2Y) + 90-day momentum
   5. Financial Conditions (Chicago Fed NFCI)
-  6. Credit Spreads (ICE BofA HY OAS)
+  6. Credit Spreads (ICE BofA high-yield and investment-grade OAS)
   7. Market Risk Level (0–100) — 1-year rolling percentile of the risk composite, in six zones (Very Low → Extreme) shared by every tab
 
   Time-series charts shade NBER recessions (FRED `USREC`; NBER announces dates with a lag).
 - **Markets** — WTI oil (optional YoY / CPI YoY overlay), Bitcoin (optional liquidity / real-yield overlays), BTC weekly WMAs and a log-regression "rainbow". BTC metrics use full history; charts follow the lookback.
-- **Regimes & Bands** — S&P 500, BTC and oil shaded by Market Risk Level zone, plus the **Rotation Ladder** (z-scored ETH/BTC → BTC/SPY → SPY/GLD → GLD/TLT), or a FRED-only regime chart when Yahoo is unavailable.
+- **Regimes & Bands** — S&P 500, BTC and oil shaded by Market Risk Level zone (a zone change must hold ~2 weeks, so brief crossings don't flicker), plus the **Rotation Ladder** (z-scored ETH/BTC → BTC/SPY → SPY/GLD → GLD/TLT), or a FRED-only regime chart when Yahoo is unavailable.
 - **Fiscal** — deficit % GDP, debt-to-GDP, net interest % GDP.
 
 ## Setup
@@ -72,9 +72,20 @@ The script exits with code 1 if no PNG could be written (e.g. missing FRED key o
 ## Data
 
 - **Macro**: FRED (St. Louis Fed) — free with API key.
-- **Rotation Ladder / BTC fallback**: Yahoo Finance — no key required.
+- **Rotation Ladder / BTC fallback**: Yahoo Finance — no key required. These still load when no FRED key is set.
 - **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
 - **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash.
+
+## Tests
+
+Offline (synthetic data, no API keys or network):
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests
+```
+
+The suite covers the date-based YoY math, the risk model (warm-up, missing pillars, zones), net liquidity units, chart builders, and headless runs of `app.py` with and without a FRED key.
 
 ## Troubleshooting
 

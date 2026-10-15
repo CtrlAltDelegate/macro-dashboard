@@ -32,6 +32,31 @@ def risk_zone(value: float) -> str:
     return RISK_ZONES[risk_zone_index(value)][2]
 
 
+def stable_zone_index(scores: pd.Series, min_obs: int = 10) -> pd.Series:
+    """Zone index per date, ignoring excursions into another zone shorter than `min_obs` observations.
+
+    A real regime change is backdated to where its run started (no lag); brief blips across a
+    boundary keep the previous zone, so band shading doesn't flicker.
+    """
+    raw = scores.apply(risk_zone_index).to_numpy()
+    if len(raw) == 0:
+        return pd.Series(dtype=int, index=scores.index)
+    out = raw.copy()
+    current = raw[0]
+    run_zone, run_start = None, 0
+    for i, z in enumerate(raw):
+        if z == current:
+            run_zone = None
+        elif z != run_zone:
+            run_zone, run_start = z, i
+        if run_zone is not None and i - run_start + 1 >= min_obs:
+            current = run_zone
+            out[run_start:i + 1] = current
+            run_zone = None
+        out[i] = current
+    return pd.Series(out, index=scores.index)
+
+
 def compute_risk_thermostat(
     macro_risk_composite: pd.Series,
     window: pd.Timedelta = pd.Timedelta(days=365),
