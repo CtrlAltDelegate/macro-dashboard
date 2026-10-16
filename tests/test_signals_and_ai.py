@@ -51,7 +51,7 @@ def test_signal_changes_units_direction_and_ranking():
 
 
 def test_steady_trend_does_not_produce_huge_scores():
-    trend = _daily(np.linspace(-0.8, 0.6, 1500))   # constant daily drift: std of moves ~ 0
+    trend = _daily(np.linspace(-8.0, 6.0, 1500))   # constant daily drift (~1bp/day): std of moves ~ 0
     flat_then_step = _daily(np.r_[np.full(1495, 5.33), np.full(5, 5.08)])  # policy rate: long flat, then a cut
     trend_move = signal_changes([Signal("Trend", trend, "%", False)], trend.index[-4])[0]
     assert 0.5 < abs(trend_move.zscore) < 2          # a normal-size move for this series (std-based scoring gave ~1e12)
@@ -128,3 +128,9 @@ def test_refresh_what_changed_markdown():
     assert md.startswith("# What changed since Tue Oct 13, 2026")
     assert "| 10Y – 2Y |" in md and "bp" in md and "safer" in md
     assert "No signals" in refresh.what_changed_markdown([], pd.Timestamp("2026-10-13"))
+
+
+def test_moves_below_display_precision_are_unchanged():
+    flat = _daily(np.r_[np.linspace(4.0, 4.2, 300), np.full(5, 4.2) + 0.001])   # +0.1bp
+    c = signal_changes([Signal("10Y", flat, "%", True)], flat.index[-4])[0]
+    assert c.delta_text == "unch" and c.worse is None

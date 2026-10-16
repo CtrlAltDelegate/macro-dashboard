@@ -39,6 +39,8 @@ class SignalChange:
 
     @property
     def delta_text(self) -> str:
+        if self.delta == 0:
+            return "unch"
         if self.unit == "%":
             return f"{self.delta:+.0f}bp"
         if self.unit == "pct":
@@ -144,6 +146,9 @@ def signal_changes(signals: list[Signal], since: pd.Timestamp) -> list[SignalCha
             delta = (now - then) / abs(then) * 100
         else:
             delta = (now - then) * (100 if sig.unit == "%" else 1)
+        # Moves smaller than the display precision count as unchanged (no "-0bp" with a red/green color)
+        if abs(delta) < {"%": 0.5, "pct": 0.05}.get(sig.unit, 0.005):
+            delta = 0.0
         horizon = s.index[-1] - since
         hist = _move(s, horizon, sig.unit) if horizon >= pd.Timedelta(days=1) else pd.Series(dtype=float)
         # Typical move size = root-mean-square of past moves over the same horizon. Unlike the standard

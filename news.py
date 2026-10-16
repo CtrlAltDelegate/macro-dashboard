@@ -4,19 +4,25 @@ No API key required. Used to support the AI interpretation layer and PDF report.
 """
 from __future__ import annotations
 
+import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any
 
-# RSS feeds: reputable business/macro sources (no auth)
+log = logging.getLogger(__name__)
+
+# RSS feeds: reputable business/macro sources (no auth). Third field: every item is macro-relevant
+# (skip the keyword filter) — Fed press releases often have titles like "Minutes of ... meetings".
 MACRO_RSS_FEEDS = [
-    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
-    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
-    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
-    ("Reuters", "https://www.reutersagency.com/feed/?taxonomy=best-topics&post_type=best"),
-    ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
-    ("NPR Business", "https://feeds.npr.org/1006/rss.xml"),
+    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html", False),
+    ("CNBC Economy", "https://www.cnbc.com/id/20910258/device/rss/rss.html", False),
+    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories", False),
+    ("Federal Reserve", "https://www.federalreserve.gov/feeds/press_all.xml", True),
+    ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml", False),
+    ("NPR Business", "https://feeds.npr.org/1006/rss.xml", False),
 ]
+FEED_TIMEOUT_S = 6
 
 # Keywords that suggest macro relevance (Fed, rates, inflation, labor, etc.)
 # Specific macro terms only: bare words like "bank", "debt" or "credit" matched company news
@@ -62,6 +68,20 @@ def _parse_date(entry: Any) -> datetime | None:
     return None
 
 
+def _fetch_feed(url: str) -> list:
+    """One feed's entries ([] on any failure). requests gives us a timeout; feedparser alone can hang."""
+    import feedparser
+    import requests
+
+    try:
+        resp = requests.get(url, timeout=FEED_TIMEOUT_S, headers={"User-Agent": "MacroDashboard/1.0"})
+        resp.raise_for_status()
+        return feedparser.parse(resp.content).entries
+    except Exception as e:
+        log.warning("RSS feed failed %s: %s", url, e)
+        return []
+
+
 def fetch_recent_macro_news(
     max_articles: int = 12,
     max_age_days: int = 7,
@@ -71,19 +91,19 @@ def fetch_recent_macro_news(
     Returns list of dicts: title, source, date (iso), link, summary (1–2 sentences).
     """
     try:
-        import feedparser
+        import feedparser  # noqa: F401
     except ImportError:
         return []
 
     cutoff = datetime.utcnow() - timedelta(days=max_age_days)
     candidates: list[tuple[datetime | None, str, dict]] = []
 
-    for source_name, url in MACRO_RSS_FEEDS:
-        try:
-            feed = feedparser.parse(url, request_headers={"User-Agent": "MacroDashboard/1.0"})
-        except Exception:
-            continue
-        for entry in feed.entries[:15]:
+    # All feeds at once: total time ≈ the slowest feed, not the sum
+    with ThreadPoolExecutor(max_workers=len(MACRO_RSS_FEEDS)) as pool:
+        entries_by_feed = list(pool.map(lambda feed: _fetch_feed(feed[1]), MACRO_RSS_FEEDS))
+
+    for (source_name, _url, always_macro), entries in zip(MACRO_RSS_FEEDS, entries_by_feed):
+        for entry in entries[:15]:
             title = _normalize_title(entry.get("title") or "")
             if not title:
                 continue
@@ -92,9 +112,9 @@ def fetch_recent_macro_news(
             summary = _snippet(desc)
             pub = _parse_date(entry)
             # Prefer macro-relevant
-            if not MACRO_KEYWORDS.search(title + " " + summary):
+            if not always_macro and not MACRO_KEYWORDS.search(title + " " + summary):
                 continue
-            score = 2 if MACRO_KEYWORDS.search(title) else 1  # macro term in the headline itself ranks first
+            score = 2 if always_macro or MACRO_KEYWORDS.search(title) else 1  # macro term in the headline ranks first
             # Recency: newer = better
             if pub and pub.tzinfo:
                 from datetime import timezone
