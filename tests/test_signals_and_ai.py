@@ -84,28 +84,39 @@ def test_collect_signals_from_fake_fred(fake_fred):
 # ---------- AI payload / prompt
 
 class _FakeAnthropic:
-    """Stands in for the anthropic module: records each request, replies with JSON text.
-    Models listed in `missing` raise a 404-style error, like a retired model ID."""
+    """Stands in for the anthropic module (same shape as SDK 1.x): records each request and replies with a
+    thinking block then a JSON text block. Models in `missing` raise NotFoundError, like a retired model ID;
+    `stop_reason` can be set to simulate a refusal."""
 
-    def __init__(self, reply: dict, missing: tuple = ()):
-        self.requests, self.reply, self.missing = [], reply, missing
+    def __init__(self, reply: dict):
+        self.requests, self.reply, self.missing, self.stop_reason = [], reply, (), "end_turn"
         fake = self
 
+        class NotFoundError(Exception):
+            pass
+
         class Messages:
+            def __init__(self, path):
+                self.path = path
+
             def create(self, **kw):
-                fake.requests.append(kw)
+                fake.requests.append({"path": self.path, **kw})
                 if kw["model"] in fake.missing:
-                    raise RuntimeError(f"Error code: 404 - not_found_error: model: {kw['model']}")
-                block = types.SimpleNamespace(type="text", text=json.dumps(fake.reply))
-                return types.SimpleNamespace(content=[block])
+                    raise NotFoundError(f"model: {kw['model']}")
+                content = [types.SimpleNamespace(type="thinking", thinking=""),
+                           types.SimpleNamespace(type="text", text=json.dumps(fake.reply))]
+                return types.SimpleNamespace(content=content, stop_reason=fake.stop_reason)
 
         self.module = types.ModuleType("anthropic")
-        self.module.Anthropic = lambda api_key=None: types.SimpleNamespace(messages=Messages())
+        self.module.NotFoundError = NotFoundError
+        self.module.Anthropic = lambda api_key=None: types.SimpleNamespace(
+            messages=Messages("messages"), beta=types.SimpleNamespace(messages=Messages("beta.messages")))
 
 
 @pytest.fixture
 def fake_claude(monkeypatch, tmp_path):
-    fake = _FakeAnthropic({"executive_summary": "- ok", "what_changed": "HY spreads widened."})
+    fake = _FakeAnthropic({"executive_summary": "- ok", "what_changed": "HY spreads widened.",
+                           "what_to_watch": "", "drivers_paragraph": "", "chart_insights": "", "asset_implications": ""})
     monkeypatch.setitem(sys.modules, "anthropic", fake.module)
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
     secrets = {"CLAUDE_API_KEY": "test-key"}
@@ -122,14 +133,25 @@ def test_ai_prompt_grounds_what_changed_in_computed_changes(fake_claude):
         changes=ai_summary.changes_for_prompt(moves), changes_since="2025-07-01",
     )
     out = ai_summary.generate_ai_summary(payload, [], "2026-10-15")
-    assert out["what_changed"] == "HY spreads widened."
-    request = fake_claude.requests[0]
-    assert request["model"] == ai_summary.DEFAULT_CLAUDE_MODEL
-    prompt = request["messages"][0]["content"]
+    assert out["what_changed"] == "HY spreads widened."           # read from the text block, not content[0]
+    prompt = fake_claude.requests[0]["messages"][0]["content"]
     assert "CHANGES (computed from the data):" in prompt
     assert "Since 2025-07-01" in prompt and '"signal": "HY OAS"' in prompt and "+60bp" in prompt
     assert '"Sahm Rule": "0.27"' in prompt
     assert "using ONLY the CHANGES section" in prompt
+
+
+def test_ai_request_uses_current_model_options(fake_claude):
+    ai_summary.generate_ai_summary({"macro_risk_score": 40}, [], "2026-10-15", force_refresh=True)
+    req = fake_claude.requests[0]
+    assert req["model"] == "claude-opus-5-5"
+    assert req["path"] == "beta.messages"                          # server-side refusal fallback is a beta
+    assert req["betas"] == ["server-side-fallback-2026-07-01"] and req["fallbacks"] == "default"
+    assert req["output_config"]["effort"] == "medium"
+    assert req["output_config"]["format"]["type"] == "json_schema"
+    assert set(req["output_config"]["format"]["schema"]["required"]) == set(ai_summary.SUMMARY_FIELDS)
+    assert "temperature" not in req                                # rejected (400) by Opus 5.5
+    assert req["max_tokens"] >= 16000                              # thinking counts toward max_tokens
 
 
 def test_ai_model_override_and_retired_model_fallback(fake_claude):
@@ -138,7 +160,15 @@ def test_ai_model_override_and_retired_model_fallback(fake_claude):
     out = ai_summary.generate_ai_summary({"macro_risk_score": 40}, [], "2026-10-15", force_refresh=True)
     assert out["executive_summary"] == "- ok"
     tried = [r["model"] for r in fake_claude.requests]
-    assert tried[0] == "claude-retired-model" and len(tried) == 2   # override first, then the first fallback
+    assert tried == ["claude-retired-model", "claude-opus-5-5"]    # override first, then the default
+    first = fake_claude.requests[0]
+    assert first["path"] == "messages" and "effort" not in first["output_config"]  # unknown model: no beta options
+
+
+def test_ai_refusal_is_reported(fake_claude):
+    fake_claude.stop_reason = "refusal"
+    out = ai_summary.generate_ai_summary({"macro_risk_score": 40}, [], "2026-10-15", force_refresh=True)
+    assert "declined" in out["_error"]
 
 
 def test_ai_key_lookup_and_availability(monkeypatch):

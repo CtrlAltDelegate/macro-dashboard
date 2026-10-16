@@ -11,16 +11,33 @@ from typing import Any
 
 import config
 
-# Token guardrails
-MAX_INPUT_TOKENS = 1800
-MAX_OUTPUT_TOKENS = 800
+# Model: Claude Opus 5.5 — the interpretation is judgment-heavy (connecting a dozen signals with headlines),
+# and the result is cached per report date + signal set, so it runs only a few times a day (~2-3 cents a call).
+# Override with CLAUDE_MODEL (env, .env or Streamlit Secrets).
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
+# Tried in order if the chosen model ID has been retired (404).
+_MODEL_FALLBACKS = ("claude-sonnet-5-5",)
+# Effort (thinking depth): "medium" is plenty for a short summary. Sent only to models that accept it.
+EFFORT = "medium"
+_EFFORT_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
+# Server-side refusal fallback: if a safety classifier declines, Anthropic re-runs the request on its
+# recommended model for that refusal category instead of returning the refusal.
+_SERVER_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
+_SERVER_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Thinking is always on with Opus 5.5 and counts toward max_tokens; you pay only for tokens actually used.
+MAX_OUTPUT_TOKENS = 16000
 
-# Anthropic retires dated model IDs; alias + fallbacks avoid 404 not_found_error
-DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"
-_MODEL_FALLBACKS = (
-    "claude-3-5-haiku-latest",
-    "claude-sonnet-4-20250514",
+SUMMARY_FIELDS = (
+    "executive_summary", "what_changed", "what_to_watch",
+    "drivers_paragraph", "chart_insights", "asset_implications",
 )
+# Structured output: the response is guaranteed to be JSON with exactly these string fields.
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {field: {"type": "string"} for field in SUMMARY_FIELDS},
+    "required": list(SUMMARY_FIELDS),
+    "additionalProperties": False,
+}
 
 
 def claude_api_key() -> str:
@@ -28,9 +45,20 @@ def claude_api_key() -> str:
     return config.get_secret("CLAUDE_API_KEY") or config.get_secret("ANTHROPIC_API_KEY")
 
 
-def _is_model_not_found(err: Exception) -> bool:
-    s = str(err).lower()
-    return "404" in str(err) or "not_found" in s or "not found" in s
+def _create(client, model: str, prompt: str):
+    """One Messages API call with the options this model supports."""
+    output_config: dict[str, Any] = {"format": {"type": "json_schema", "schema": _SUMMARY_SCHEMA}}
+    if model in _EFFORT_MODELS:
+        output_config["effort"] = EFFORT
+    request = dict(
+        model=model,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        output_config=output_config,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    if model in _SERVER_FALLBACK_MODELS:
+        return client.beta.messages.create(betas=[_SERVER_FALLBACK_BETA], fallbacks="default", **request)
+    return client.messages.create(**request)
 
 # Cache: key by (report_date, hash(signals + headlines))
 def _cache_key(signals: dict, news: list) -> str:
@@ -192,7 +220,7 @@ CHANGES (computed from the data):
 RECENT HEADLINES:
 {news_str}
 
-Respond with exactly this JSON (no other text):
+Respond with JSON containing these fields:
 {{
   "executive_summary": "3-6 bullet points, max 120 words total. One line per point.",
   "what_changed": "2-4 sentences on what moved, using ONLY the CHANGES section (say the reference date; lead with 'large' moves). If CHANGES is empty or not provided, say that no major signals moved. Max 80 words.",
@@ -204,40 +232,28 @@ Respond with exactly this JSON (no other text):
 
     try:
         import anthropic
+
         client = anthropic.Anthropic(api_key=api_key)
         primary = (config.get_secret("CLAUDE_MODEL") or DEFAULT_CLAUDE_MODEL).strip()
-        models_to_try = [primary]
-        for m in _MODEL_FALLBACKS:
-            if m not in models_to_try:
-                models_to_try.append(m)
+        models_to_try = [primary] + [m for m in (DEFAULT_CLAUDE_MODEL, *_MODEL_FALLBACKS) if m != primary]
 
-        content = ""
-        last_err: Exception | None = None
+        msg = None
         for model in models_to_try:
             try:
-                msg = client.messages.create(
-                    model=model,
-                    max_tokens=MAX_OUTPUT_TOKENS,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                block = msg.content[0]
-                content = (getattr(block, "text", "") or "").strip()
+                msg = _create(client, model, prompt)
                 break
-            except Exception as e:
-                if _is_model_not_found(e):
-                    last_err = e
-                    continue
-                return {"_error": str(e)}
+            except anthropic.NotFoundError:
+                continue  # retired / unknown model ID: try the next one
+        if msg is None:
+            return {"_error": f"None of these Claude models are available: {', '.join(models_to_try)}"}
+        if msg.stop_reason == "refusal":
+            return {"_error": "Claude declined this request (safety classifier), even after fallback."}
+        if msg.stop_reason == "max_tokens":
+            return {"_error": "Claude's response was cut off (max_tokens). Try again or lower the effort."}
+        # Thinking blocks come first with current models; the answer is the text block.
+        content = next((b.text for b in msg.content if b.type == "text"), "").strip()
         if not content:
-            return {"_error": str(last_err) if last_err else "No response from Claude"}
-
-        # Extract JSON (handle optional markdown code block)
-        if "```" in content:
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            if start >= 0 and end > start:
-                content = content[start:end]
+            return {"_error": "No response text from Claude"}
         data = json.loads(content)
 
         def _to_str(v: Any) -> str:
@@ -249,14 +265,7 @@ Respond with exactly this JSON (no other text):
                 return "\n".join(str(x).strip() for x in v if str(x).strip()).strip()
             return str(v).strip()
 
-        out = {
-            "executive_summary": _to_str(data.get("executive_summary")),
-            "what_changed": _to_str(data.get("what_changed")),
-            "what_to_watch": _to_str(data.get("what_to_watch")),
-            "drivers_paragraph": _to_str(data.get("drivers_paragraph")),
-            "chart_insights": _to_str(data.get("chart_insights")),
-            "asset_implications": _to_str(data.get("asset_implications")),
-        }
+        out = {field: _to_str(data.get(field)) for field in SUMMARY_FIELDS}
         _write_cache(report_date, key, out)
         return out
     except Exception as e:
