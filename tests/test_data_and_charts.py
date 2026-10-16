@@ -69,6 +69,9 @@ def test_yahoo_close_extraction_layouts():
     ("Powell signals rate cuts are coming", True),
     ("Treasury yields jump after strong payrolls", True),
     ("Oil prices slide as OPEC boosts output", True),
+    ("Nvidia and Cisco confirm multimillion-dollar donations to a White House ballroom", False),
+    ("The dollar rallies as traders pare rate bets", True),
+    ("U.S. dollar index hits a three-month high", True),
 ])
 def test_macro_headline_filter(title, keep):
     assert bool(news.MACRO_KEYWORDS.search(title)) is keep

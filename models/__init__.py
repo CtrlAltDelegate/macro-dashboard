@@ -11,6 +11,7 @@ from .rotation import prepare_rotation_curves, prepare_rotation_zscore
 from .regime import prepare_regime_curves
 from .timeseries import change_over, latest_change
 from .liquidity import compute_net_liquidity
+from .signals import Signal, SignalChange, collect_signals, signal_changes, last_issue_date
 
 __all__ = [
     "compute_valuation_pressure_index",
@@ -30,4 +31,9 @@ __all__ = [
     "change_over",
     "latest_change",
     "compute_net_liquidity",
+    "Signal",
+    "SignalChange",
+    "collect_signals",
+    "signal_changes",
+    "last_issue_date",
 ]

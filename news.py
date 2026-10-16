@@ -27,7 +27,9 @@ MACRO_KEYWORDS = re.compile(
     r"treasur(?:y|ies) (?:yields?|market)|bond (?:yields?|market)|yield curve|"
     r"national debt|debt ceiling|budget deficit|fiscal|stimulus|tariffs?|trade war|"
     r"crude|oil prices?|opec|ecb|central banks?|monetary policy|quantitative (?:easing|tightening)|"
-    r"retail sales|consumer spending|housing starts|credit spreads?|dollar)\b",
+    r"retail sales|consumer spending|housing starts|credit spreads?|"
+    # the currency, not "multimillion-dollar"
+    r"(?<![-\w])(?:the|u\.s\.|us|strong(?:er)?|weak(?:er)?) dollar|dollar index)\b",
     re.I,
 )
 

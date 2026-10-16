@@ -59,6 +59,9 @@ from data import (
 from models import (
     compute_risk_model,
     compute_net_liquidity,
+    collect_signals,
+    signal_changes,
+    last_issue_date,
     warmup_start,
     risk_zone,
     prepare_regime_curves,
@@ -78,9 +81,10 @@ except ImportError:
     fetch_recent_macro_news = lambda *a, **k: []
     rank_macro_relevance = lambda x, max_return=5: x[:max_return]
 try:
-    from ai_summary import build_macro_signal_payload, generate_ai_summary, ai_summary_available
+    from ai_summary import build_macro_signal_payload, changes_for_prompt, generate_ai_summary, ai_summary_available
 except ImportError:
     build_macro_signal_payload = lambda **k: {}
+    changes_for_prompt = lambda changes, limit=8: []
     generate_ai_summary = lambda *a, **k: None
     ai_summary_available = lambda: False
 
@@ -442,8 +446,10 @@ if not oil_df.empty and "DCOILWTICO" in oil_df.columns:
 
 
 # ----- Current Readout Panel -----
-def _readout_chip(label: str, value: str, style: str = "neutral") -> str:
-    return f'<span class="readout-chip readout-chip--{style}"><span class="readout-label">{label}</span>{value}</span>'
+def _readout_chip(label: str, value: str, style: str = "neutral", title: str = "") -> str:
+    value = value.replace("$", "&#36;")  # keep "$" out of Streamlit's LaTeX parsing
+    tip = f' title="{title}"' if title else ""
+    return f'<span class="readout-chip readout-chip--{style}"{tip}><span class="readout-label">{label}</span>{value}</span>'
 
 
 macro_score = ""
@@ -520,6 +526,47 @@ if _sahm is not None and not _sahm.dropna().empty:
 if chips:
     st.markdown('<div class="readout-panel">' + "".join(chips) + "</div>", unsafe_allow_html=True)
 
+# ----- What changed (computed from the data: value now vs. value at the reference date) -----
+_signals = collect_signals(
+    val_df=val_df, risk_full=risk_full, yield_df=yield_df, liquidity_full=liquidity_full,
+    model_inputs=model_input_series, thermo=thermo_series, btc=btc_series, oil_df=oil_df,
+)
+_today = pd.Timestamp(date.today())
+_last_issue = last_issue_date(_today)
+_since_options = {
+    f"Since last issue ({_last_issue:%a %b} {_last_issue.day})": _last_issue,
+    "1 week": _today - pd.Timedelta(weeks=1),
+    "1 month": _today - pd.DateOffset(months=1),
+}
+changes_since = None
+signal_moves = []
+if _signals:
+    st.markdown("#### What changed")
+    _since_label = st.radio("Compare with", list(_since_options), horizontal=True,
+                            label_visibility="collapsed", key="changes_since")
+    changes_since = _since_options[_since_label]
+    signal_moves = signal_changes(_signals, changes_since)
+    if signal_moves:
+        _chips = []
+        for c in signal_moves[:8]:
+            style = "neutral" if c.worse is None else ("red" if c.worse else "green")
+            arrow = "▲" if c.delta > 0 else "▼" if c.delta < 0 else "■"
+            unusual = c.zscore is not None and abs(c.zscore) >= 2
+            tip = f"{abs(c.zscore):.1f}× a typical move over this period" if c.zscore is not None else ""
+            _chips.append(_readout_chip(c.label, f"{c.now_text} {arrow} {c.delta_text}" + (" · unusual" if unusual else ""), style, tip))
+        st.markdown('<div class="readout-panel">' + "".join(_chips) + "</div>", unsafe_allow_html=True)
+        with st.expander(f"All {len(signal_moves)} changes since {changes_since:%b} {changes_since.day} (largest relative to normal first)"):
+            st.dataframe(pd.DataFrame([{
+                "Signal": c.label,
+                "Now": c.now_text,
+                "Change": c.delta_text,
+                "vs. typical": f"{abs(c.zscore):.1f}×" if c.zscore is not None else "—",
+                "Direction": "—" if c.worse is None else ("riskier" if c.worse else "safer"),
+                "Latest data": f"{c.as_of:%b} {c.as_of.day}, {c.as_of.year}",
+            } for c in signal_moves]), hide_index=True)
+    else:
+        st.caption(f"No new data since {changes_since:%b} {changes_since.day}.")
+
 # ----- AI Interpretation + Macro Drivers -----
 ai_result = None
 macro_drivers_list = []
@@ -566,6 +613,9 @@ if enable_ai:
         deficit_pct_gdp=_last(fiscal_df, "DEFICIT_PCT_GDP"),
         debt_to_gdp=_last(fiscal_df, "DEBT_PCT_GDP"),
         interest_burden_pct=_last(fiscal_df, "INTEREST_PCT_GDP"),
+        readings={sig.label: sig.fmt.format(sig.series.iloc[-1]) for sig in _signals},
+        changes=changes_for_prompt(signal_moves),
+        changes_since=f"{changes_since:%Y-%m-%d}" if changes_since is not None else None,
     )
     with st.spinner("Generating AI interpretation…"):
         ai_result = generate_ai_summary(payload, macro_drivers_list, date.today().isoformat())

@@ -41,8 +41,15 @@ def build_macro_signal_payload(
     deficit_pct_gdp: float | None = None,
     debt_to_gdp: float | None = None,
     interest_burden_pct: float | None = None,
+    readings: dict[str, str] | None = None,
+    changes: list[dict[str, Any]] | None = None,
+    changes_since: str | None = None,
 ) -> dict[str, Any]:
-    """Build a compact payload for the LLM. Only numbers and short labels."""
+    """Build a compact payload for the LLM. Only numbers and short labels.
+
+    readings: extra current values already formatted for display, e.g. {"Sahm Rule": "0.27", "VIX": "17.0"}.
+    changes / changes_since: output of changes_for_prompt() — what actually moved since a reference date.
+    """
     payload: dict[str, Any] = {}
     if macro_risk_score is not None:
         payload["macro_risk_score"] = round(macro_risk_score, 0)
@@ -80,7 +87,25 @@ def build_macro_signal_payload(
         payload["debt_to_gdp"] = round(debt_to_gdp, 1)
     if interest_burden_pct is not None:
         payload["interest_burden_pct"] = round(interest_burden_pct, 1)
+    if readings:
+        payload["readings"] = readings
+    if changes_since:
+        payload["changes_since"] = changes_since
+        payload["changes"] = changes or []
     return payload
+
+
+def changes_for_prompt(changes: list, limit: int = 8) -> list[dict[str, Any]]:
+    """Compact form of models.signals.SignalChange list (largest unusual moves first) for the LLM."""
+    out = []
+    for c in changes[:limit]:
+        item = {"signal": c.label, "now": c.now_text, "change": c.delta_text}
+        if c.zscore is not None:
+            item["size_vs_typical"] = "large" if abs(c.zscore) >= 2 else "notable" if abs(c.zscore) >= 1 else "normal"
+        if c.worse is not None:
+            item["direction"] = "riskier" if c.worse else "safer"
+        out.append(item)
+    return out
 
 
 def _read_cache(report_date: str, key: str) -> dict | None:
@@ -128,8 +153,14 @@ def generate_ai_summary(
     if not api_key:
         return None  # No key: caller can show "add OPENAI_API_KEY to Secrets"
 
-    # Build compact prompt
-    signals_str = json.dumps(signals, indent=0)
+    # Build compact prompt; changes get their own section so "what changed" is grounded in real moves
+    current = {k: v for k, v in signals.items() if k not in ("changes", "changes_since")}
+    signals_str = json.dumps(current, indent=0)
+    if signals.get("changes_since"):
+        changes_str = (f"Since {signals['changes_since']} (largest moves relative to normal first):\n"
+                       + json.dumps(signals.get("changes") or [], indent=0))
+    else:
+        changes_str = "Not provided."
     news_str = ""
     for i, a in enumerate(news_items[:5], 1):
         news_str += f"{i}. [{a.get('source','')}] {a.get('title','')}\n   {a.get('summary','')}\n"
@@ -138,16 +169,19 @@ def generate_ai_summary(
 MACRO SIGNALS (current readings):
 {signals_str}
 
+CHANGES (computed from the data):
+{changes_str}
+
 RECENT HEADLINES:
 {news_str}
 
 Respond with exactly this JSON (no other text):
 {{
   "executive_summary": "3-6 bullet points, max 120 words total. One line per point.",
-  "what_changed": "2-4 sentences on what moved recently, max 80 words.",
+  "what_changed": "2-4 sentences on what moved, using ONLY the CHANGES section (say the reference date; lead with 'large' moves). If CHANGES is empty or not provided, say that no major signals moved. Max 80 words.",
   "what_to_watch": "2-3 sentences on what to watch next, max 60 words.",
   "drivers_paragraph": "One short paragraph linking headlines to chart signals when relevant, or empty string if not useful.",
-  "chart_insights": "3-5 short bullet points: what the key charts (liquidity, macro risk, yield curve, credit, financial conditions, rotation) say about today's economy. Reference specific signals from the payload (e.g. yield curve state, liquidity_trend, credit_stress_state). Max 150 words total.",
+  "chart_insights": "3-5 short bullet points: what the key charts (liquidity and net liquidity, macro risk, yield curve 10Y-3M and 10Y-2Y, credit spreads, financial conditions, labor incl. the Sahm rule, rotation) say about today's economy. Reference specific signals from the payload. Max 150 words total.",
   "asset_implications": "One short paragraph (2-4 sentences): Given current conditions, what asset class tilts or pivots might be worth considering? Phrase as thoughtful interpretation, e.g. 'Due to [X], one might consider tilting toward [Y].' Reference specific signals. Not investment advice. Max 100 words."
 }}"""
 

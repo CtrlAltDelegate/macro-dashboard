@@ -4,7 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-END = pd.Timestamp("2026-10-09")
+# Data runs through yesterday, like live FRED data, so date-relative features ("since last issue") have data
+END = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
 
 
 def _recession_flags(n: int) -> np.ndarray:

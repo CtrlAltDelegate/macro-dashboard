@@ -8,7 +8,7 @@ import config
 import data
 import news
 from conftest import ROOT
-from fakes import btc_prices, ladder_ratios
+from fakes import END, btc_prices, ladder_ratios
 
 APP = str(ROOT / "app.py")
 
@@ -48,7 +48,7 @@ def test_app_with_fred_data(fake_fred, offline_markets):
     for label in ["Net Liquidity", "IG OAS", "VIX", "Broad Dollar", "10Y Breakeven", "Real GDP YoY"]:
         assert label in m, label
     captions = [c.value for c in at.caption]
-    assert "as of Oct 2026" in captions          # monthly CPI dated by its month (fake data runs to Oct 2026)
+    assert f"as of {END:%b %Y}" in captions       # monthly CPI dated by its month, not a day
     assert any(c.startswith("as of Q") for c in captions)  # quarterly GDP
     # 8 macro charts + rotation ladder + 3 fiscal tiles with PNG export
     assert sum(b.label == "Export PNG" for b in at.button) == 12
@@ -57,6 +57,12 @@ def test_app_with_fred_data(fake_fred, offline_markets):
     # Readout includes the new chips
     readout = next(md.value for md in at.markdown if md.value.startswith("<div class=\"readout-panel\""))
     assert "10Y–2Y" in readout and "Sahm Rule" in readout
+    # "What changed" strip with a comparison picker and a full table
+    assert any(md.value == "#### What changed" for md in at.markdown)
+    assert at.radio[0].options[1:] == ["1 week", "1 month"]
+    assert any(e.label.startswith("All ") and "changes since" in e.label for e in at.expander)
+    at.radio[0].set_value("1 month").run()
+    assert not at.exception
 
 
 def test_app_without_fred_key_still_shows_yahoo_data(monkeypatch, offline_markets):

@@ -24,7 +24,7 @@ from data import (
     fetch_model_input_series,
 )
 from charts.build import build_all_charts, add_recession_shading
-from models import compute_risk_model, warmup_start
+from models import compute_risk_model, warmup_start, collect_signals, signal_changes, last_issue_date
 
 # Descriptive filenames for Substack / newsletter (order matches dashboard 1–8)
 EXPORT_NAMES = [
@@ -38,6 +38,19 @@ EXPORT_NAMES = [
     "08_rotation_ladder.png",
     "09_net_liquidity.png",
 ]
+
+
+def what_changed_markdown(changes, since: pd.Timestamp) -> str:
+    """Markdown table of signal moves since `since` (largest relative to normal first)."""
+    lines = [f"# What changed since {since:%a %b} {since.day}, {since.year}", ""]
+    if not changes:
+        return "\n".join(lines + ["No signals have new data since then.", ""])
+    lines += ["| Signal | Now | Change | vs. typical | Direction |", "|---|---|---|---|---|"]
+    for c in changes:
+        typical = f"{abs(c.zscore):.1f}x" if c.zscore is not None else "-"
+        direction = "-" if c.worse is None else ("riskier" if c.worse else "safer")
+        lines.append(f"| {c.label} | {c.now_text} | {c.delta_text} | {typical} | {direction} |")
+    return "\n".join(lines + [""])
 
 
 def run_refresh(lookback: str = "5y") -> int:
@@ -62,7 +75,8 @@ def run_refresh(lookback: str = "5y") -> int:
         # A year of extra history so the YoY line covers the whole window
         liq_start = (pd.Timestamp(obs_start) - pd.DateOffset(years=1)).date().isoformat() if obs_start else None
         liquidity_df = fetch_liquidity_data(observation_start=liq_start)
-        ig_series = fetch_model_input_series(observation_start=obs_start).get("BAMLC0A0CM")  # optional; empty on failure
+        model_inputs = fetch_model_input_series(observation_start=obs_start)  # optional series; empty on failure
+        ig_series = model_inputs.get("BAMLC0A0CM")
         recessions = fetch_recession_periods(observation_start=obs_start)
     except Exception as e:
         print(f"FRED fetch failed: {e}", file=sys.stderr)
@@ -115,6 +129,15 @@ def run_refresh(lookback: str = "5y") -> int:
     if not written:
         print("No PNGs were written.", file=sys.stderr)
         return 1
+
+    # Newsletter notes: what moved since the previous Tue/Fri issue
+    since = last_issue_date(pd.Timestamp(today))
+    signals = collect_signals(val_df=val_df, risk_full=risk_full, yield_df=yield_df, liquidity_full=liquidity_df,
+                              model_inputs=model_inputs, thermo=thermo)
+    notes = what_changed_markdown(signal_changes(signals, since), since)
+    for folder in (date_dir, latest_dir):
+        (folder / "what_changed.md").write_text(notes, encoding="utf-8")
+    print(f"  Wrote what_changed.md (since {since.date()})")
     print(f"Done. Exports: {date_dir}, {latest_dir}")
     return 0
 

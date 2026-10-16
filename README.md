@@ -6,6 +6,8 @@ Private, local-first analytical dashboard for macro/market regime indicators. Pr
 
 Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headlines and a one-page PDF summary.
 
+- **What changed** — under the readout, each headline signal (risk level, net liquidity, curve spreads, credit spreads, VIX, CPI, Sahm rule, S&P 500, BTC, oil…) compared with the last Tue/Fri issue, 1 week or 1 month ago. Moves are ranked by how unusual they are for that series (vs. its typical move over the same span), colored by whether they add or reduce risk; the full table is in an expander. Computed from the data itself, so nothing needs to be stored between runs.
+
 - **Macro (Core)** — model-input cards grouped by theme (rates & inflation, growth & labor, liquidity & credit, market stress), each with its 1Y change and the date of the latest observation. Includes the Sahm rule, 10Y breakeven inflation, IG spread, VIX and the broad dollar. Charts are laid out two per row, with descriptions under "About this chart":
   1. Global Liquidity — Fed balance sheet (WALCL) YoY %, plus **net liquidity** (WALCL − Treasury General Account − reverse repo)
   2. Stock Market Pressure — `((SPX/UNRATE²) × CPI × FEDFUNDS) / M2`, rebased to 100
@@ -62,7 +64,7 @@ python refresh.py 10y       # optional: 1y, 3y, 5y, 10y, Max
 
 Or run `scripts\refresh.ps1` from the project root. Output:
 
-- **exports\\latest\\** — nine PNGs, `01_global_liquidity.png` … `09_net_liquidity.png` (see `EXPORT_NAMES` in `refresh.py`)
+- **exports\\latest\\** — nine PNGs, `01_global_liquidity.png` … `09_net_liquidity.png` (see `EXPORT_NAMES` in `refresh.py`), plus `what_changed.md`: a table of what moved since the previous Tue/Fri issue, ready to paste into the newsletter
 - **exports\\YYYY-MM-DD\\** — same files, dated for that run
 
 The script exits with code 1 if no PNG could be written (e.g. missing FRED key or Kaleido), so Task Scheduler shows the failure.
@@ -74,7 +76,7 @@ The script exits with code 1 if no PNG could be written (e.g. missing FRED key o
 - **Macro**: FRED (St. Louis Fed) — free with API key.
 - **Rotation Ladder / BTC fallback**: Yahoo Finance — no key required. These still load when no FRED key is set.
 - **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
-- **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash.
+- **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash. The prompt includes the current readings (including net liquidity, 10Y–2Y, Sahm rule, IG spread, VIX) and the computed "What changed" moves, and "What changed" in the summary is limited to those moves rather than guessed.
 
 ## Tests
 
