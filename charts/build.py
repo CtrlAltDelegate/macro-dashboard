@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from .theme import apply_theme, AXIS_LIGHT
 from models import (
     compute_valuation_pressure_index,
+    rebase_to_window_mean,
     compute_macro_risk_composite,
     compute_macro_risk_roc,
     compute_risk_thermostat,
@@ -310,22 +311,25 @@ def build_valuation_chart(
     val_df: pd.DataFrame,
     overlay_series: pd.Series | None = None,
     show_event_markers: bool = False,
+    display_start: str | None = None,
 ) -> go.Figure | None:
+    """Stock Market Pressure, 100 = average over the displayed window.
+    Pass data starting a year before display_start (the index uses CPI inflation YoY)."""
     if val_df.empty or len(val_df) < 10:
         return None
-    vpi = compute_valuation_pressure_index(val_df)
+    vpi = _from(compute_valuation_pressure_index(val_df), display_start)
     if vpi.empty:
         return None
-    base = vpi.iloc[0]
-    vpi_rebase = (vpi / base) * 100 if base != 0 else vpi
+    vpi_rebase = rebase_to_window_mean(vpi)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=vpi_rebase.index, y=vpi_rebase.values, mode="lines",
-        name="Stock Market Pressure (rebased)", line=dict(color="#58a6ff", width=2)
+        name="Stock Market Pressure", line=dict(color="#58a6ff", width=2),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Pressure: %{y:.0f} (100 = window avg)<extra></extra>",
     ))
-    _add_market_overlay(fig, overlay_series, use_secondary_y=False)
+    _add_market_overlay(fig, overlay_series, use_secondary_y=True)
     _add_event_markers(fig, show_event_markers)
-    apply_theme(fig, "Stock Market Pressure (rebased to 100)", height=380)
+    apply_theme(fig, "Stock Market Pressure (100 = window average)", height=380)
     return fig
 
 
@@ -939,6 +943,17 @@ def build_btc_rainbow_chart(
     return fig
 
 
+def build_market_ratios_chart(ratios: pd.DataFrame, display_start: str | None = None) -> go.Figure | None:
+    """Copper/Gold (growth vs. safety) and equal-/cap-weight S&P 500 (breadth), each 100 = window average."""
+    if ratios is None or ratios.empty:
+        return None
+    rebased = pd.DataFrame({c: rebase_to_window_mean(_from(ratios[c].dropna(), display_start)) for c in ratios.columns})
+    rebased = rebased.dropna(how="all")
+    if rebased.empty:
+        return None
+    return build_curves_chart(rebased, title="Growth & Breadth (100 = window average)")
+
+
 def build_rotation_ladder_chart(ladder_ratios_df: pd.DataFrame) -> go.Figure | None:
     """Rotation ladder: z-score normalized ratios (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT) for Tab 3."""
     if ladder_ratios_df.empty or len(ladder_ratios_df.columns) == 0:
@@ -974,7 +989,7 @@ def build_all_charts(
         fig_last = build_rotation_ladder_chart(ladder_df)
     return (
         build_liquidity_chart(liquidity_df, show_event_markers=show_event_markers, display_start=display_start),
-        build_valuation_chart(val_df, overlay_series=overlay_valuation, show_event_markers=show_event_markers),
+        build_valuation_chart(val_df, overlay_series=overlay_valuation, show_event_markers=show_event_markers, display_start=display_start),
         build_macro_risk_chart(risk_df, overlay_series=overlay_risk, show_event_markers=show_event_markers, composite=composite),
         build_yield_curve_chart(yield_df, show_10y_3m_lines=show_10y_3m, show_event_markers=show_event_markers),
         build_fci_chart(risk_df, show_ma=True, show_event_markers=show_event_markers),

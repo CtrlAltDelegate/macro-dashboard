@@ -24,7 +24,7 @@ from data import (
     fetch_model_input_series,
 )
 from charts.build import build_all_charts, add_recession_shading
-from models import compute_risk_model, warmup_start, collect_signals, signal_changes, last_issue_date
+from models import compute_risk_model, warmup_start, collect_signals, signal_changes, last_issue_date, yoy_fetch_start
 
 # Descriptive filenames for Substack / newsletter (order matches dashboard 1–8)
 EXPORT_NAMES = [
@@ -69,12 +69,12 @@ def run_refresh(lookback: str = "5y") -> int:
 
     print("Fetching FRED (valuation + macro risk + yield curve + liquidity)...")
     try:
-        val_df = fetch_valuation_data(observation_start=obs_start)
+        # A year of extra history for YoY lines (CPI inflation in Stock Market Pressure, liquidity YoY)
+        year_before = yoy_fetch_start(obs_start)
+        val_full = fetch_valuation_data(observation_start=year_before)
         risk_full = fetch_macro_risk_data(observation_start=warmup_start(obs_start))
         yield_df = fetch_yield_curve_data(observation_start=obs_start)
-        # A year of extra history so the YoY line covers the whole window
-        liq_start = (pd.Timestamp(obs_start) - pd.DateOffset(years=1)).date().isoformat() if obs_start else None
-        liquidity_df = fetch_liquidity_data(observation_start=liq_start)
+        liquidity_df = fetch_liquidity_data(observation_start=year_before)
         model_inputs = fetch_model_input_series(observation_start=obs_start)  # optional series; empty on failure
         ig_series = model_inputs.get("BAMLC0A0CM")
         recessions = fetch_recession_periods(observation_start=obs_start)
@@ -91,9 +91,10 @@ def run_refresh(lookback: str = "5y") -> int:
 
     print("Building charts...")
     risk_df = risk_full[risk_full.index >= pd.Timestamp(obs_start)] if obs_start else risk_full
+    val_df = val_full[val_full.index >= pd.Timestamp(obs_start)] if obs_start else val_full
     composite, thermo = compute_risk_model(risk_full, obs_start)
     figs = build_all_charts(
-        val_df, risk_df, yield_df, liquidity_df, ladder_df,
+        val_full, risk_df, yield_df, liquidity_df, ladder_df,
         show_event_markers=False, composite=composite, thermo=thermo,
         display_start=obs_start, ig_series=ig_series,
     )

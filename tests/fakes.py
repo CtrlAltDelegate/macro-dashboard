@@ -37,6 +37,10 @@ FRED_SERIES = {
     "SAHMREALTIME": ("MS", lambda n: np.full(n, 0.27)),
     "DTWEXBGS": ("B", lambda n: np.linspace(110, 122, n)),
     "VIXCLS": ("B", lambda n: 16 + 3 * np.sin(np.arange(n) / 30)),
+    "DRTSCILM": ("QS", lambda n: 10 * np.sin(np.arange(n) / 3)),             # net % tightening
+    "THREEFYTP10": ("B", lambda n: 0.4 + 0.3 * np.sin(np.arange(n) / 250)),
+    "PERMIT": ("MS", lambda n: 1400 + 100 * np.sin(np.arange(n) / 6)),        # thousands, SAAR
+    "MORTGAGE30US": ("W-THU", lambda n: np.linspace(3.5, 6.4, n)),
     "DCOILWTICO": ("B", lambda n: 70 + 8 * np.sin(np.arange(n) / 60)),
     "DFII10": ("B", lambda n: np.full(n, 1.8)),
     "FYFSGDA188S": ("YS", lambda n: np.linspace(-3, -6.2, n)),
@@ -67,6 +71,16 @@ def btc_prices(start: str | None = None) -> pd.Series:
     idx = pd.date_range("2014-09-17", END, freq="D")
     s = pd.Series(np.exp(np.linspace(6, 11.3, len(idx))) * (1 + 0.2 * np.sin(np.arange(len(idx)) / 200)), index=idx)
     return s[s.index >= pd.Timestamp(start)] if start else s
+
+
+def market_ratios(start: str | None = None) -> pd.DataFrame:
+    idx = pd.bdate_range("2016-01-01", END)
+    n = len(idx)
+    df = pd.DataFrame({
+        "Copper/Gold": 0.0016 + 0.0002 * np.sin(np.arange(n) / 100),
+        "Equal/Cap S&P": 0.3 - 0.00002 * np.arange(n) / 10,
+    }, index=idx)
+    return df[df.index >= pd.Timestamp(start)] if start else df
 
 
 def ladder_ratios(start: str | None = None) -> pd.DataFrame:

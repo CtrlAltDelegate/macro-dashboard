@@ -8,7 +8,7 @@ import config
 import data
 import news
 from conftest import ROOT
-from fakes import END, btc_prices, ladder_ratios
+from fakes import END, btc_prices, ladder_ratios, market_ratios
 
 APP = str(ROOT / "app.py")
 
@@ -16,6 +16,7 @@ APP = str(ROOT / "app.py")
 @pytest.fixture
 def offline_markets(monkeypatch, no_openai):
     monkeypatch.setattr(data, "fetch_rotation_ladder_data", lambda start=None: ladder_ratios(start))
+    monkeypatch.setattr(data, "fetch_market_ratios", lambda start=None: market_ratios(start))
     monkeypatch.setattr(data, "fetch_bitcoin_data", lambda observation_start=None: btc_prices(observation_start))
     monkeypatch.setattr(news, "fetch_recent_macro_news", lambda **kw: [{
         "title": "Your Social Security check will rise $75 a month as inflation cools",
@@ -45,7 +46,11 @@ def test_app_with_fred_data(fake_fred, offline_markets):
     assert m["Core CPI YoY"] == "2.8%"
     assert m["Fed Balance Sheet"] == "$6.60T"
     assert m["Sahm Rule"] == "0.27 pp"
-    for label in ["Net Liquidity", "IG OAS", "VIX", "Broad Dollar", "10Y Breakeven", "Real GDP YoY"]:
+    assert m["Building Permits"].endswith("K") and m["Lending Standards"].endswith("%")
+    assert "Growth & Breadth" in [h.value for h in at.header]
+    for label in ["Net Liquidity", "IG OAS", "VIX", "Broad Dollar", "10Y Breakeven", "Real GDP YoY",
+                  "10Y Term Premium", "30Y Mortgage", "Building Permits", "Lending Standards",
+                  "Copper/Gold ×1000", "Equal/Cap S&P"]:
         assert label in m, label
     captions = [c.value for c in at.caption]
     assert f"as of {END:%b %Y}" in captions       # monthly CPI dated by its month, not a day
@@ -71,3 +76,12 @@ def test_app_without_fred_key_still_shows_yahoo_data(monkeypatch, offline_market
     assert any("FRED_API_KEY" in w.value for w in at.warning)
     assert "Rotation Ladder" in [h.value for h in at.subheader]
     assert metrics(at).get("Bitcoin Price", "—") != "—"
+
+
+def test_pdf_brief_on_demand(fake_fred, offline_markets):
+    at = run_app()
+    assert "Download PDF" not in [d.label for d in at.get("download_button")]   # not built until asked
+    next(b for b in at.button if b.label == "Prepare PDF brief").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Download PDF" in [d.label for d in at.get("download_button")]
+    assert not [c.value for c in at.caption if c.value.startswith("PDF could not be generated")]

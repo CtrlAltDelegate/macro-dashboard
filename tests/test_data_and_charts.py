@@ -82,7 +82,8 @@ def test_macro_headline_filter(title, keep):
 @pytest.fixture
 def frames(fake_fred):
     start = "2021-10-14"
-    liq_start = "2020-10-14"
+    from models import yoy_fetch_start
+    liq_start = yoy_fetch_start(start)
     risk_full = fred_data.fetch_macro_risk_data(warmup_start(start))
     return dict(
         start=start,
@@ -138,3 +139,38 @@ def test_recession_shading_clipped_to_data():
                                 (pd.Timestamp("2019-01-01"), pd.Timestamp("2019-02-28"))])
     assert len(fig.layout.shapes) == 1
     assert str(fig.layout.shapes[0].x0).startswith("2020-03-01")
+
+
+def test_network_is_blocked_in_tests():
+    import socket
+    with pytest.raises(RuntimeError, match="network"):
+        socket.create_connection(("api.stlouisfed.org", 443), timeout=1)
+
+
+def test_valuation_chart_covers_display_window(fake_fred):
+    from charts.build import build_valuation_chart
+    from models import yoy_fetch_start
+    val_full = fred_data.fetch_valuation_data(yoy_fetch_start("2021-10-14"))
+    fig = build_valuation_chart(val_full, display_start="2021-10-14")
+    y = np.asarray(fig.data[0].y, dtype=float)
+    assert 0 <= (pd.Timestamp(fig.data[0].x[0]) - pd.Timestamp("2021-10-14")).days <= 7
+    assert y.mean() == pytest.approx(100)
+
+
+def test_market_ratios_from_yahoo_layout(monkeypatch):
+    import data.market_data as md
+    idx = pd.date_range("2024-01-01", periods=3)
+    cols = pd.MultiIndex.from_product([["GC=F", "HG=F", "RSP", "SPY"], ["Close"]])
+    raw = pd.DataFrame([[2000.0, 4.0, 160.0, 480.0]] * 3, index=idx, columns=cols)
+    monkeypatch.setattr(md, "_download", lambda tickers, start: raw)
+    out = md.fetch_market_ratios("2024-01-01")
+    assert list(out.columns) == ["Copper/Gold", "Equal/Cap S&P"]
+    assert out["Copper/Gold"].iloc[-1] == pytest.approx(0.002) and out["Equal/Cap S&P"].iloc[-1] == pytest.approx(1 / 3)
+
+
+def test_market_ratios_chart_window_average():
+    from charts.build import build_market_ratios_chart
+    from fakes import market_ratios
+    fig = build_market_ratios_chart(market_ratios(), display_start="2022-01-03")
+    assert [t.name for t in fig.data] == ["Copper/Gold", "Equal/Cap S&P"]
+    assert np.asarray(fig.data[0].y, dtype=float).mean() == pytest.approx(100)

@@ -1,16 +1,18 @@
 # Macro Dashboard
 
+[![tests](https://github.com/CtrlAltDelegate/macro-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/CtrlAltDelegate/macro-dashboard/actions/workflows/tests.yml)
+
 Private, local-first analytical dashboard for macro/market regime indicators. Produces newsletter-ready charts (exportable PNG) for Substack.
 
 ## Features
 
-Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headlines and a one-page PDF summary.
+Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headlines and a PDF brief (summary, What changed table and four key charts; built when you click **Prepare PDF brief**).
 
 - **What changed** — under the readout, each headline signal (risk level, net liquidity, curve spreads, credit spreads, VIX, CPI, Sahm rule, S&P 500, BTC, oil…) compared with the last Tue/Fri issue, 1 week or 1 month ago. Moves are ranked by how unusual they are for that series (vs. its typical move over the same span), colored by whether they add or reduce risk; the full table is in an expander. Computed from the data itself, so nothing needs to be stored between runs.
 
-- **Macro (Core)** — model-input cards grouped by theme (rates & inflation, growth & labor, liquidity & credit, market stress), each with its 1Y change and the date of the latest observation. Includes the Sahm rule, 10Y breakeven inflation, IG spread, VIX and the broad dollar. Charts are laid out two per row, with descriptions under "About this chart":
+- **Macro (Core)** — model-input cards grouped by theme (rates & inflation, growth & labor, liquidity & credit, market stress & breadth), each with its 1Y change and the date of the latest observation. Includes the Sahm rule, 10Y breakeven inflation, 10Y term premium, 30Y mortgage rate, building permits, bank lending standards, IG spread, VIX, the broad dollar, copper/gold and equal-/cap-weight S&P 500. Charts are laid out two per row, with descriptions under "About this chart":
   1. Global Liquidity — Fed balance sheet (WALCL) YoY %, plus **net liquidity** (WALCL − Treasury General Account − reverse repo)
-  2. Stock Market Pressure — `((SPX/UNRATE²) × CPI × FEDFUNDS) / M2`, rebased to 100
+  2. Stock Market Pressure — `((SPX/UNRATE²) × CPI inflation (YoY) × FEDFUNDS) / M2`; 100 = average over the lookback
   3. Economic Risk Index — average of six pillar z-scores (3-year window), each oriented so higher = worse: real GDP growth, 1-year change in unemployment, CPI inflation, NFCI, Fed balance-sheet growth and HY spread; plus its 1-month ROC. Computed with 5 years of extra history so the start of every lookback is warmed up
   4. Yield Curve (10Y – 3M and 10Y – 2Y) + 90-day momentum
   5. Financial Conditions (Chicago Fed NFCI)
@@ -18,7 +20,7 @@ Four tabs, plus a readout strip, optional AI interpretation, Macro Drivers headl
   7. Market Risk Level (0–100) — 1-year rolling percentile of the risk composite, in six zones (Very Low → Extreme) shared by every tab
 
   Time-series charts shade NBER recessions (FRED `USREC`; NBER announces dates with a lag).
-- **Markets** — WTI oil (optional YoY / CPI YoY overlay), Bitcoin (optional liquidity / real-yield overlays), BTC weekly WMAs and a log-regression "rainbow". BTC metrics use full history; charts follow the lookback.
+- **Markets** — WTI oil (optional YoY / CPI YoY overlay), Bitcoin (optional liquidity / real-yield overlays), BTC weekly WMAs and a log-regression "rainbow". BTC metrics use full history; charts follow the lookback. **Growth & Breadth** charts copper/gold (growth vs. safety) and RSP/SPY (market breadth).
 - **Regimes & Bands** — S&P 500, BTC and oil shaded by Market Risk Level zone (a zone change must hold ~2 weeks, so brief crossings don't flicker), plus the **Rotation Ladder** (z-scored ETH/BTC → BTC/SPY → SPY/GLD → GLD/TLT), or a FRED-only regime chart when Yahoo is unavailable.
 - **Fiscal** — deficit % GDP, debt-to-GDP, net interest % GDP.
 
@@ -74,7 +76,7 @@ The script exits with code 1 if no PNG could be written (e.g. missing FRED key o
 ## Data
 
 - **Macro**: FRED (St. Louis Fed) — free with API key.
-- **Rotation Ladder / BTC fallback**: Yahoo Finance — no key required. These still load when no FRED key is set.
+- **Rotation Ladder, copper/gold, RSP/SPY, BTC fallback**: Yahoo Finance — no key required. These still load when no FRED key is set.
 - **Macro Drivers (news)**: RSS feeds (CNBC, MarketWatch, Yahoo Finance, BBC, NPR) — no key required.
 - **AI Interpretation** (optional): OpenAI — set `OPENAI_API_KEY` in `.env` or Streamlit Secrets to enable. Uses **gpt-4o-mini** for low cost; output is cached by report date and signal hash. The prompt includes the current readings (including net liquidity, 10Y–2Y, Sahm rule, IG spread, VIX) and the computed "What changed" moves, and "What changed" in the summary is limited to those moves rather than guessed.
 
@@ -87,7 +89,17 @@ pip install -r requirements-dev.txt
 python -m pytest tests
 ```
 
-The suite covers the date-based YoY math, the risk model (warm-up, missing pillars, zones), net liquidity units, chart builders, and headless runs of `app.py` with and without a FRED key.
+The suite covers the date-based YoY math, the risk model (warm-up, missing pillars, zones), net liquidity units, chart builders, the What changed signals, the AI prompt (fake OpenAI client), the PDF, zone calibration, and headless runs of `app.py` with and without a FRED key. Network access is blocked during tests. GitHub Actions runs the suite on every push to `main` (`.github/workflows/tests.yml`).
+
+## Zone calibration
+
+Do the Market Risk Level zones actually separate stock-market outcomes? With a FRED key:
+
+```bash
+python scripts/calibrate_zones.py
+```
+
+computes the risk model over full history and, for each zone, the S&P 500's median forward 3/6/12-month returns, how often 12 months later was higher, and the average worst 6-month drawdown. Output goes to the console and `exports/zone_calibration.md`. Use it to sanity-check or adjust the cut-offs in `models/thermostat.py` (`RISK_ZONES`).
 
 ## Troubleshooting
 

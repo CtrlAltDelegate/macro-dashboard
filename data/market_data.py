@@ -78,6 +78,17 @@ def fetch_bitcoin_data(observation_start: str | None = None) -> pd.Series:
     return fetch_bitcoin_yfinance(start=observation_start)
 
 
+def fetch_ratio_data(pairs: list[tuple[str, str, str]], start: str | None = None) -> pd.DataFrame:
+    """Price ratios from Yahoo: one column per (numerator, denominator, label) whose tickers both came back."""
+    tickers = sorted({t for a, b, _ in pairs for t in (a, b)})
+    closes = _extract_closes(_download(tickers, start), tickers)
+    ratios = pd.DataFrame(index=closes.index)
+    for a, b, label in pairs:
+        if a in closes.columns and b in closes.columns:
+            ratios[label] = closes[a] / closes[b]
+    return ratios.ffill().dropna(how="all") if len(ratios.columns) else pd.DataFrame()
+
+
 # Display labels for ladder pairs (falls back to "A/B")
 _LADDER_LABELS = {
     ("ETH-USD", "BTC-USD"): "ETH/BTC",
@@ -89,13 +100,10 @@ _LADDER_LABELS = {
 
 def fetch_rotation_ladder_data(start: str | None = None) -> pd.DataFrame:
     """Fetch close prices for rotation ladder pairs (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT). Returns ratio columns."""
-    pairs = config.ROTATION_LADDER_PAIRS
-    tickers = sorted({t for pair in pairs for t in pair})
-    closes = _extract_closes(_download(tickers, start), tickers)
-    if len(closes.columns) < 2:
-        return pd.DataFrame()
-    ratios = pd.DataFrame(index=closes.index)
-    for a, b in pairs:
-        if a in closes.columns and b in closes.columns:
-            ratios[_LADDER_LABELS.get((a, b), f"{a}/{b}")] = closes[a] / closes[b]
-    return ratios.ffill().dropna(how="all")
+    pairs = [(a, b, _LADDER_LABELS.get((a, b), f"{a}/{b}")) for a, b in config.ROTATION_LADDER_PAIRS]
+    return fetch_ratio_data(pairs, start)
+
+
+def fetch_market_ratios(start: str | None = None) -> pd.DataFrame:
+    """Copper/Gold and equal-weight/cap-weight S&P 500 ratios (config.MARKET_RATIO_PAIRS)."""
+    return fetch_ratio_data(config.MARKET_RATIO_PAIRS, start)

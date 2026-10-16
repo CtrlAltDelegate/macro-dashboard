@@ -75,6 +75,7 @@ def collect_signals(
     thermo: pd.Series | None = None,
     btc: pd.Series | None = None,
     oil_df: pd.DataFrame | None = None,
+    market_ratios: pd.DataFrame | None = None,
 ) -> list[Signal]:
     """The dashboard's headline signals, from whatever data is available."""
     mi = model_inputs or {}
@@ -92,15 +93,21 @@ def collect_signals(
         ("10Y – 2Y", _col(yield_df, "T10Y2Y"), "%", False, "{:.2f}%"),
         ("10Y Treasury", d10, "%", None, "{:.2f}%"),
         ("10Y Breakeven", mi.get("T10YIE"), "%", True, "{:.2f}%"),
+        ("10Y Term Premium", mi.get("THREEFYTP10"), "%", True, "{:.2f}%"),
+        ("30Y Mortgage", mi.get("MORTGAGE30US"), "%", True, "{:.2f}%"),
         ("CPI YoY", change_over(cpi) if cpi is not None else None, "%", True, "{:.1f}%"),
         ("Unemployment", _col(risk_full, "UNEMPLOYMENT"), "%", True, "{:.1f}%"),
         ("Sahm Rule", mi.get("SAHMREALTIME"), "pts", True, "{:.2f}"),
         ("HY OAS", _col(risk_full, "CREDIT_STRESS"), "%", True, "{:.2f}%"),
         ("IG OAS", mi.get("BAMLC0A0CM"), "%", True, "{:.2f}%"),
         ("NFCI", _col(risk_full, "CREDIT_TIGHTENING"), "pts", True, "{:.3f}"),
+        ("Lending Standards", mi.get("DRTSCILM"), "pts", True, "{:+.1f}%"),
+        ("Building Permits", mi.get("PERMIT"), "pct", False, "{:,.0f}K"),
         ("VIX", mi.get("VIXCLS"), "pts", True, "{:.1f}"),
         ("Broad Dollar", mi.get("DTWEXBGS"), "pct", True, "{:.1f}"),
         ("S&P 500", _col(val_df, "SP500"), "pct", False, "{:,.0f}"),
+        ("Copper/Gold ×1000", _col(market_ratios, "Copper/Gold") * 1000 if _col(market_ratios, "Copper/Gold") is not None else None, "pct", False, "{:.2f}"),
+        ("Equal/Cap S&P", _col(market_ratios, "Equal/Cap S&P"), "pct", False, "{:.3f}"),
         ("Bitcoin", btc, "pct", None, "${:,.0f}"),
         ("WTI Oil", _col(oil_df, "DCOILWTICO"), "pct", None, "${:.2f}"),
     ]

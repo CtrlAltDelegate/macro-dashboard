@@ -36,6 +36,7 @@ from charts.build import (
     build_bitcoin_chart,
     build_bands_chart,
     build_rotation_ladder_chart,
+    build_market_ratios_chart,
     build_btc_rainbow_chart,
     build_macro_radar_chart,
     build_deficit_pct_gdp_chart,
@@ -49,6 +50,7 @@ from data import (
     fetch_yield_curve_data,
     fetch_liquidity_data,
     fetch_rotation_ladder_data,
+    fetch_market_ratios,
     fetch_oil_data,
     fetch_bitcoin_data,
     fetch_real_yield_data,
@@ -67,6 +69,7 @@ from models import (
     prepare_regime_curves,
     change_over,
     latest_change,
+    yoy_fetch_start,
 )
 from models.btc_metrics import compute_btc_snapshot
 
@@ -322,8 +325,8 @@ with st.sidebar:
         st.rerun()
 
 def _year_before(start: str | None) -> str | None:
-    """One year before `start`: YoY series need that much extra history to cover the whole window."""
-    return (pd.Timestamp(start) - pd.DateOffset(years=1)).date().isoformat() if start else None
+    """Fetch start for YoY series: a year (plus margin) before `start`, so the YoY line covers the whole window."""
+    return yoy_fetch_start(start)
 
 
 def _from(obj, start: str | None):
@@ -339,13 +342,14 @@ def load_all(lookback: str) -> dict:
     obs_start = config.lookback_to_observation_start(lookback)
     tasks = {
         "ladder": lambda: fetch_rotation_ladder_data(start=obs_start),
+        "market_ratios": lambda: fetch_market_ratios(start=yoy_fetch_start(obs_start)),  # 1Y change needs a year
         # Full history: the WMAs (up to 300 weeks) and the rainbow regression need it; charts trim to the
         # lookback. FRED first, Yahoo fallback (also used when there is no FRED key).
         "btc": lambda: fetch_bitcoin_data(observation_start=None),
     }
     if config.FRED_API_KEY:
         tasks.update({
-            "val": lambda: fetch_valuation_data(observation_start=obs_start),
+            "val_full": lambda: fetch_valuation_data(observation_start=_year_before(obs_start)),  # CPI YoY needs a year
             # Extra history so the composite / thermostat are warmed up on the first displayed day
             "risk_full": lambda: fetch_macro_risk_data(observation_start=warmup_start(obs_start)),
             "yield": lambda: fetch_yield_curve_data(observation_start=obs_start),
@@ -379,13 +383,14 @@ def compute_risk(risk_full: pd.DataFrame, display_start: str | None) -> tuple[pd
 
 _data = load_all(lookback)
 _empty_df, _empty_s = pd.DataFrame(), pd.Series(dtype=float)
-val_df = _data.get("val") if _data.get("val") is not None else _empty_df
+val_full = _data.get("val_full") if _data.get("val_full") is not None else _empty_df
 risk_full = _data.get("risk_full") if _data.get("risk_full") is not None else _empty_df
 yield_df = _data.get("yield") if _data.get("yield") is not None else _empty_df
 liquidity_full = _data.get("liquidity_full") if _data.get("liquidity_full") is not None else _empty_df
 oil_df = _data.get("oil") if _data.get("oil") is not None else _empty_df
 fiscal_df = _data.get("fiscal") if _data.get("fiscal") is not None else _empty_df
 ladder_df = _data.get("ladder") if _data.get("ladder") is not None else _empty_df
+market_ratios_full = _data.get("market_ratios") if _data.get("market_ratios") is not None else _empty_df
 btc_series = _data.get("btc") if _data.get("btc") is not None else _empty_s
 real_yield_series = _data.get("real_yield") if _data.get("real_yield") is not None else _empty_s
 model_input_series = _data.get("model_inputs") or {}
@@ -394,6 +399,7 @@ recession_periods = _data.get("recessions") or []
 obs_start = config.lookback_to_observation_start(lookback)
 # Display windows: risk data was fetched with a warm-up, liquidity a year early (for YoY)
 risk_df = _from(risk_full, obs_start)
+val_df = _from(val_full, obs_start)
 liquidity_df = _from(liquidity_full, obs_start)
 
 _failed = [name for name, value in _data.items() if value is None]
@@ -530,6 +536,7 @@ if chips:
 _signals = collect_signals(
     val_df=val_df, risk_full=risk_full, yield_df=yield_df, liquidity_full=liquidity_full,
     model_inputs=model_input_series, thermo=thermo_series, btc=btc_series, oil_df=oil_df,
+    market_ratios=market_ratios_full,
 )
 _today = pd.Timestamp(date.today())
 _last_issue = last_issue_date(_today)
@@ -686,6 +693,14 @@ def _build_pdf_summary(ai_summary=None, macro_drivers=None) -> dict:
         snapshot["credit_status"] = credit_status
     if fci_status:
         snapshot["fci_status"] = fci_status
+    extra = []
+    if not net_liquidity_series.empty:
+        extra.append(("Net Liquidity", f"${net_liquidity_series.iloc[-1] / 1e6:.2f}T"))
+    if last_10y2y_val is not None:
+        extra.append(("Yield Curve (10Y–2Y)", f"{last_10y2y_val:.2f}%"))
+    if _sahm is not None and not _sahm.dropna().empty:
+        extra.append(("Sahm Rule", f"{float(_sahm.dropna().iloc[-1]):.2f} (recession signal at 0.50)"))
+    snapshot["extra"] = extra
     return {
         "type": "summary",
         "title": "Executive Summary",
@@ -696,6 +711,8 @@ def _build_pdf_summary(ai_summary=None, macro_drivers=None) -> dict:
         "radar_fig": build_macro_radar_chart(risk_df, liquidity_full, yield_df, thermo_series),
         "ai_summary": ai_summary,
         "macro_drivers": macro_drivers or [],
+        "changes_since": f"{changes_since:%a %b} {changes_since.day}" if changes_since is not None else None,
+        "changes": changes_for_prompt(signal_moves, limit=12),
     }
 
 # ----- Tabs: Macro (Core) | Markets | Regimes & Bands | Fiscal -----
@@ -760,12 +777,15 @@ with tab_macro:
         _card("CPI YoY", _yoy(_col(risk_full, "INFLATION")), _pct1, True),
         _card("Core CPI YoY", _yoy(_mi("CPILFESL")), _pct1, True),
         _card("10Y Breakeven", _mi("T10YIE"), _pct2, True),
+        _card("10Y Term Premium", _mi("THREEFYTP10"), _pct2, True),
+        _card("30Y Mortgage", _mi("MORTGAGE30US"), _pct2, True),
     ])
     _input_group("Growth & labor", [
         _card("Real GDP YoY", _yoy(_col(risk_full, "GDP")), _pct1, False, roc=False),
         _card("Unemployment", _col(risk_full, "UNEMPLOYMENT"), _pct1, True),
         _card("Sahm Rule", _mi("SAHMREALTIME"), lambda v: f"{v:.2f} pp", True, roc=False),
         _card("Initial Claims", _mi("ICSA"), lambda v: f"{v:,.0f}", True),
+        _card("Building Permits", _mi("PERMIT"), lambda v: f"{v:,.0f}K", False),  # thousands, annualized
     ])
     _input_group("Liquidity & credit", [
         _card("Fed Balance Sheet", _col(liquidity_df, "WALCL"), lambda v: f"${v/1e6:.2f}T", False),  # millions USD
@@ -774,15 +794,18 @@ with tab_macro:
         _card("HY OAS", _col(risk_df, "CREDIT_STRESS"), _pct2, True),
         _card("IG OAS", _mi("BAMLC0A0CM"), _pct2, True),
         _card("NFCI", _col(risk_df, "CREDIT_TIGHTENING"), lambda v: f"{v:.3f}", True),
+        _card("Lending Standards", _mi("DRTSCILM"), lambda v: f"{v:+.1f}%", True, roc=False),  # net % of banks tightening
     ])
-    _input_group("Market stress", [
+    _input_group("Market stress & breadth", [
         _card("VIX", _mi("VIXCLS"), lambda v: f"{v:.1f}", True),
         _card("Broad Dollar", _mi("DTWEXBGS"), lambda v: f"{v:.1f}", True),  # strong dollar tightens global conditions
+        _card("Copper/Gold ×1000", _col(market_ratios_full, "Copper/Gold"), lambda v: f"{v * 1000:.2f}", False),
+        _card("Equal/Cap S&P", _col(market_ratios_full, "Equal/Cap S&P"), lambda v: f"{v:.3f}", False),
     ])
     st.divider()
 
     _latest_thermo = thermo_series.iloc[-1] if not thermo_series.empty else None
-    _chart_grid([
+    macro_cards = [
         dict(
             title="Global Liquidity",
             about="Fed balance sheet (WALCL) year-over-year change. Rising liquidity tends to support asset prices; "
@@ -801,9 +824,9 @@ with tab_macro:
         ),
         dict(
             title="Stock Market Pressure",
-            about="How much pressure the economy is placing on stock prices: `(S&P 500 / unemployment²) × CPI × Fed funds / M2`, "
-                  "rebased to 100. Higher values mean more pressure on valuations; lower values tend to support stocks.",
-            fig=build_valuation_chart(val_df, overlay_series=overlay_val, show_event_markers=show_event_markers),
+            about="How much pressure the economy is placing on stock prices: `(S&P 500 / unemployment²) × CPI inflation (YoY) × Fed funds / M2`. "
+                  "100 = the average over the selected lookback. Higher values mean more pressure on valuations; lower values tend to support stocks.",
+            fig=build_valuation_chart(val_full, overlay_series=overlay_val, show_event_markers=show_event_markers, display_start=obs_start),
             key="vpi", png_name="02_stock_market_pressure.png",
             missing="Not enough valuation data. Check FRED_API_KEY and series availability.",
         ),
@@ -849,7 +872,8 @@ with tab_macro:
             missing="Requires macro risk data.",
             footer=f"Current: {_latest_thermo:.0f}/100 — {risk_zone(_latest_thermo)}" if _latest_thermo is not None else "",
         ),
-    ])
+    ]
+    _chart_grid(macro_cards)
 
 with tab_markets:
     st.markdown("#### Model Inputs")
@@ -952,6 +976,19 @@ with tab_markets:
         _plot(fig_rainbow, "btc_rainbow")
     else:
         st.info("Not enough BTC history for Rainbow (need 30+ points).")
+
+    st.header("Growth & Breadth")
+    st.markdown(
+        '<p class="section-desc"><b>Copper/Gold</b> rises when industrial demand (growth) outpaces demand for safety. '
+        '<b>Equal/Cap S&P</b> (RSP/SPY) rises when the average stock beats the index heavyweights — broad, healthy '
+        'participation; falling means a narrow, top-heavy market. Both rebased so 100 = the lookback average.</p>',
+        unsafe_allow_html=True,
+    )
+    fig_ratios = build_market_ratios_chart(market_ratios_full, display_start=obs_start)
+    if fig_ratios is not None:
+        _plot(fig_ratios, "market_ratios")
+    else:
+        st.info("Copper/Gold and RSP/SPY data unavailable (Yahoo Finance).")
 
 with tab_regimes:
     st.markdown("#### Model Inputs")
@@ -1085,37 +1122,48 @@ with tab_fiscal:
         ),
     ])
 
-# ----- Generate PDF (Executive Summary + Macro Radar) -----
+# ----- PDF brief: summary page + key charts, built on demand -----
+PDF_CHART_KEYS = ["net_liquidity", "macro_risk", "yield", "thermo"]
+
 if pdf_available() and build_dashboard_pdf:
     def _pdf_export_fn(fig):
         if fig is None:
             return None
-        png, _ = _png_from_json(_fig_for_pdf(fig).to_json())
+        png, _ = _png_from_json(_fig_for_pdf(fig).to_json())  # cached; None if Kaleido is unavailable
         return png
 
-    try:
-        # PDF = summary only (no chart images), so it always works with zero setup
-        summary = _build_pdf_summary(
-            ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
-            macro_drivers=macro_drivers_list if include_macro_drivers else [],
-        )
-        pdf_bytes = build_dashboard_pdf(
-            [summary],
-            report_date=date.today().isoformat(),
-            lookback_label=lookback,
-            data_sources="FRED, Yahoo Finance",
-            export_fn=_pdf_export_fn,
-        )
-        st.download_button(
-            "Download PDF",
-            data=pdf_bytes,
-            file_name="macro_intelligence_brief.pdf",
-            mime="application/pdf",
-            key="dl_pdf",
-        )
-        st.caption("Summary only. View all charts in the dashboard above.")
-    except Exception as e:
-        st.caption(f"PDF could not be generated: {e}")
+    st.divider()
+    if st.button("Prepare PDF brief", key="prep_pdf"):
+        st.session_state["pdf_requested"] = True
+    if st.session_state.get("pdf_requested"):
+        try:
+            with st.spinner("Building PDF…"):
+                summary = _build_pdf_summary(
+                    ai_summary=(ai_result if (enable_ai and ai_result and not ai_result.get("_error")) else None),
+                    macro_drivers=macro_drivers_list if include_macro_drivers else [],
+                )
+                cards = {c["key"]: c for c in macro_cards}
+                chart_sections = [
+                    {"type": "chart", "title": cards[k]["title"], "caption": cards[k]["about"], "fig": cards[k]["fig"]}
+                    for k in PDF_CHART_KEYS if k in cards and cards[k]["fig"] is not None
+                ]
+                pdf_bytes = build_dashboard_pdf(
+                    [summary] + chart_sections,
+                    report_date=date.today().isoformat(),
+                    lookback_label=lookback,
+                    data_sources="FRED, Yahoo Finance",
+                    export_fn=_pdf_export_fn,
+                )
+            st.download_button(
+                "Download PDF",
+                data=pdf_bytes,
+                file_name=f"macro_intelligence_brief_{date.today().isoformat()}.pdf",
+                mime="application/pdf",
+                key="dl_pdf",
+            )
+            st.caption("Summary, What changed, and four key charts. All charts are in the dashboard above.")
+        except Exception as e:
+            st.caption(f"PDF could not be generated: {e}")
 
 st.markdown("""
 <div class="footer">

@@ -129,3 +129,21 @@ def test_net_liquidity_units():
     assert compute_net_liquidity(liq).iloc[-1] == pytest.approx(5_700_000)
     assert compute_net_liquidity(liq.drop(columns=["RRP"])).iloc[-1] == pytest.approx(6_200_000)
     assert compute_net_liquidity(liq.drop(columns=["TGA"])).empty
+
+
+# ---------- valuation pressure
+
+def test_valuation_index_uses_inflation_rate_not_price_level():
+    from models import compute_valuation_pressure_index, rebase_to_window_mean
+    months = pd.date_range("2015-01-01", "2026-09-01", freq="MS")
+    base = pd.DataFrame({
+        "SP500": 4000.0, "UNRATE": 4.0, "FEDFUNDS": 2.0, "M2": 20000.0,
+        "INFLATION": 250 * 1.03 ** (np.arange(len(months)) / 12),   # steady 3% inflation, rising price level
+    }, index=months)
+    vpi = compute_valuation_pressure_index(base)
+    assert vpi.index[0] >= months[0] + pd.DateOffset(years=1) - pd.Timedelta(days=1)  # YoY needs a year
+    assert vpi.max() / vpi.min() == pytest.approx(1.0, abs=1e-6)                     # flat: level no longer leaks in
+    deflation = base.assign(INFLATION=250 * 0.99 ** (np.arange(len(months)) / 12))
+    assert (compute_valuation_pressure_index(deflation) == 0).all()                   # floored, not negative
+    rebased = rebase_to_window_mean(pd.Series([0.01, 1.0, 2.0]))
+    assert rebased.mean() == pytest.approx(100)                                       # tiny first value doesn't blow up

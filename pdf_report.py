@@ -1,7 +1,8 @@
 """
 Build a single PDF of the Macro Dashboard for download, email, or print.
 Uses reportlab; chart images are exported from Plotly figures at build time (or pre-supplied PNG bytes).
-Supports: Executive Summary + Macro Radar on Page 1, then all chart sections from all three tabs.
+Supports: Executive Summary (snapshot, What changed, Macro Radar, AI, drivers) on Page 1, then chart sections.
+Charts whose PNG export fails are skipped with a short note, so the PDF always builds.
 """
 from __future__ import annotations
 
@@ -69,6 +70,7 @@ class SnapshotDict(TypedDict, total=False):
     spread_val: str
     credit_status: str
     fci_status: str
+    extra: list  # [(label, value)] additional rows, e.g. net liquidity, 10Y-2Y, Sahm rule
 
 
 class SummarySection(TypedDict, total=False):
@@ -81,6 +83,8 @@ class SummarySection(TypedDict, total=False):
     radar_png_bytes: bytes | None
     ai_summary: dict | None  # executive_summary, what_changed, what_to_watch, drivers_paragraph
     macro_drivers: list | None  # [{title, source, date, link, summary}]
+    changes_since: str | None  # e.g. "Tue Oct 13"
+    changes: list | None  # [{signal, now, change, size_vs_typical?, direction?}] largest unusual moves first
 
 
 class ChartSection(TypedDict, total=False):
@@ -126,6 +130,7 @@ def _add_snapshot_table(
         rows.append(["Credit Stress (HY OAS)", snapshot["credit_status"]])
     if snapshot.get("fci_status"):
         rows.append(["Financial Conditions (NFCI)", snapshot["fci_status"]])
+    rows += [[label, value] for label, value in snapshot.get("extra") or []]
     if not rows:
         return
     from reportlab.lib.units import inch
@@ -146,6 +151,34 @@ def _add_snapshot_table(
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
     story.append(Paragraph("Today's Snapshot", snapshot_heading_style))
+    story.append(tbl)
+    story.append(Spacer(1, 0.2 * inch))
+
+
+def _add_changes_table(story: list, since: str, changes: list, heading_style: Any, cell_style: Any) -> None:
+    """Append the 'What changed' table: signal, now, change, size vs. typical, direction (colored)."""
+    if not changes:
+        return
+    from reportlab.lib.units import inch
+    header = ["Signal", "Now", "Change", "vs. typical", "Direction"]
+    rows = [[Paragraph(f"<b>{h}</b>", cell_style) for h in header]]
+    styles = [
+        ("BACKGROUND", (0, 0), (-1, 0), SNAPSHOT_BORDER),
+        ("BOX", (0, 0), (-1, -1), 0.5, SNAPSHOT_BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, SNAPSHOT_BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for i, c in enumerate(changes, start=1):
+        direction = c.get("direction") or "-"
+        rows.append([Paragraph(_escape(str(x)), cell_style) for x in (
+            c.get("signal", ""), c.get("now", ""), c.get("change", ""), c.get("size_vs_typical", "-"), direction)])
+        if direction in ("riskier", "safer"):
+            styles.append(("TEXTCOLOR", (4, i), (4, i), colors.HexColor("#b42318" if direction == "riskier" else "#1a7f37")))
+    widths = [2.1 * inch, 1.3 * inch, 1.1 * inch, 1.1 * inch, PAGE_CONTENT_WIDTH - 5.6 * inch]
+    tbl = Table(rows, colWidths=widths, repeatRows=1)
+    tbl.setStyle(TableStyle(styles))
+    story.append(Paragraph(f"What changed since {_escape(since)}", heading_style))
     story.append(tbl)
     story.append(Spacer(1, 0.2 * inch))
 
@@ -328,6 +361,9 @@ def build_dashboard_pdf(
             story, snapshot,
             snapshot_heading_style, snapshot_label_style, snapshot_value_style,
         )
+        if first.get("changes_since"):
+            _add_changes_table(story, first["changes_since"], first.get("changes") or [],
+                               snapshot_heading_style, snapshot_value_style)
 
         # Macro Radar image
         radar_bytes = first.get("radar_png_bytes")
@@ -385,7 +421,7 @@ def build_dashboard_pdf(
                 story.append(Paragraph("[Chart image could not be embedded.]", placeholder_style))
         else:
             story.append(Paragraph(
-                "[Chart could not be embedded. Run: pip install playwright  then  python -m playwright install chromium]",
+                "[Chart not included: PNG export (Kaleido) is unavailable here. See the web dashboard.]",
                 placeholder_style,
             ))
         story.append(Spacer(1, 0.2 * inch))

@@ -1,4 +1,4 @@
-from .valuation import compute_valuation_pressure_index
+from .valuation import compute_valuation_pressure_index, rebase_to_window_mean
 from .macro_risk import (
     compute_macro_risk_composite,
     compute_macro_risk_roc,
@@ -9,12 +9,13 @@ from .macro_risk import (
 from .thermostat import compute_risk_thermostat, RISK_ZONES, risk_zone, risk_zone_index, stable_zone_index
 from .rotation import prepare_rotation_curves, prepare_rotation_zscore
 from .regime import prepare_regime_curves
-from .timeseries import change_over, latest_change
+from .timeseries import change_over, latest_change, yoy_fetch_start
 from .liquidity import compute_net_liquidity
 from .signals import Signal, SignalChange, collect_signals, signal_changes, last_issue_date
 
 __all__ = [
     "compute_valuation_pressure_index",
+    "rebase_to_window_mean",
     "compute_macro_risk_composite",
     "compute_macro_risk_roc",
     "compute_pillar_scores",
@@ -30,6 +31,7 @@ __all__ = [
     "prepare_regime_curves",
     "change_over",
     "latest_change",
+    "yoy_fetch_start",
     "compute_net_liquidity",
     "Signal",
     "SignalChange",

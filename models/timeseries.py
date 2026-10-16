@@ -11,6 +11,14 @@ import numpy as np
 import pandas as pd
 
 ONE_YEAR = pd.Timedelta(days=365)
+# Extra history to fetch so a YoY series covers the whole display window. A year plus a margin: monthly and
+# quarterly series' first observation can fall weeks after the fetch start.
+YOY_FETCH_MARGIN = pd.DateOffset(years=1, days=100)
+
+
+def yoy_fetch_start(display_start: str | None) -> str | None:
+    """Fetch start for series shown as year-over-year changes from display_start (None = full history)."""
+    return (pd.Timestamp(display_start) - YOY_FETCH_MARGIN).date().isoformat() if display_start else None
 
 
 def change_over(series: pd.Series, lookback: pd.Timedelta = ONE_YEAR, *, pct: bool = True) -> pd.Series:

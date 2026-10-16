@@ -115,6 +115,12 @@ ROTATION_LADDER_PAIRS = [
     ("GLD", "TLT"),          # Gold/Bonds
 ]
 
+# Market ratios (Yahoo Finance): (numerator, denominator, label)
+MARKET_RATIO_PAIRS = [
+    ("HG=F", "GC=F", "Copper/Gold"),     # growth (industrial demand) vs. safety
+    ("RSP", "SPY", "Equal/Cap S&P"),     # breadth: equal-weight vs. cap-weight S&P 500
+]
+
 # Fiscal tab — deficit, debt, interest burden
 # FYFSGDA188S = Federal Surplus or Deficit [-] as % of GDP (annual; deficit negative → use -series for Deficit % GDP)
 # FYGFDPUN = Federal Debt as Percent of GDP (annual)
@@ -136,6 +142,10 @@ FRED_MODEL_INPUTS = {
     "BAMLC0A0CM": "ICE BofA US investment-grade corporate OAS",
     "DTWEXBGS": "Nominal broad U.S. dollar index",
     "VIXCLS": "CBOE VIX",
+    "DRTSCILM": "Net % of banks tightening C&I lending standards (large/mid firms, quarterly survey)",
+    "THREEFYTP10": "10-year Treasury term premium (Kim-Wright)",
+    "PERMIT": "New private housing units authorized by building permits (thousands, SAAR)",
+    "MORTGAGE30US": "30-year fixed mortgage rate (weekly)",
 }
 
 # AI interpretation (optional): OpenAI for lightweight summary
