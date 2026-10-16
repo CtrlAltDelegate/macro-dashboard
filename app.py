@@ -491,13 +491,14 @@ def _latest_text(fig) -> str:
 def _plot(fig, key: str, shade_recessions: bool = True, describe: bool = True) -> None:
     """Render a chart, with NBER recession shading on time-series charts (also kept in PNG exports).
     On screen the chart's own title is dropped (the section heading above says the same; PNG exports keep it),
-    the toolbar shows on hover/tap instead of covering the title, and a caption gives the latest value."""
+    Plotly's toolbar is hidden (on phones it covered the legend; drag-zoom, double-tap reset and Streamlit's
+    fullscreen still work, and PNG export has its own button), and a caption gives the latest value."""
     if shade_recessions:
         add_recession_shading(fig, recession_periods)
     title, top = fig.layout.title.text, fig.layout.margin.t
     fig.update_layout(title_text=None, margin_t=44)
     try:
-        st.plotly_chart(fig, width="stretch", key=key, config={"displayModeBar": "hover", "displaylogo": False})
+        st.plotly_chart(fig, width="stretch", key=key, config={"displayModeBar": False})
     finally:
         fig.update_layout(title_text=title, margin_t=top)
     if describe:
