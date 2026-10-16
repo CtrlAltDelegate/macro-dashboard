@@ -37,6 +37,8 @@ def fake_fred(monkeypatch):
 
 
 @pytest.fixture
-def no_openai(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", "")
+def no_ai(monkeypatch):
+    """AI interpretation off: no Claude key, so no paid calls from tests."""
+    monkeypatch.setenv("CLAUDE_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(config, "CLAUDE_API_KEY", "")

@@ -121,6 +121,13 @@ MARKET_RATIO_PAIRS = [
     ("RSP", "SPY", "Equal/Cap S&P"),     # breadth: equal-weight vs. cap-weight S&P 500
 ]
 
+# Equity bear-market reference (Regimes & Bands tab) — long-history index tickers (Yahoo Finance)
+EQUITY_CYCLE_TICKERS = {
+    "S&P 500": "^GSPC",
+    "NASDAQ Composite": "^IXIC",
+}
+BEAR_MARKET_THRESHOLD = 0.20  # 20%+ peak-to-trough decline
+
 # Fiscal tab — deficit, debt, interest burden
 # FYFSGDA188S = Federal Surplus or Deficit [-] as % of GDP (annual; deficit negative → use -series for Deficit % GDP)
 # FYGFDPUN = Federal Debt as Percent of GDP (annual)
@@ -148,5 +155,5 @@ FRED_MODEL_INPUTS = {
     "MORTGAGE30US": "30-year fixed mortgage rate (weekly)",
 }
 
-# AI interpretation (optional): OpenAI for lightweight summary
-OPENAI_API_KEY = get_secret("OPENAI_API_KEY")
+# AI interpretation (optional): Anthropic Claude (CLAUDE_API_KEY or ANTHROPIC_API_KEY)
+CLAUDE_API_KEY = get_secret("CLAUDE_API_KEY") or get_secret("ANTHROPIC_API_KEY")

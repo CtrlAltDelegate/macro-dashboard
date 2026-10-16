@@ -78,6 +78,29 @@ def fetch_bitcoin_data(observation_start: str | None = None) -> pd.Series:
     return fetch_bitcoin_yfinance(start=observation_start)
 
 
+def fetch_index_history(ticker: str, period: str = "max", interval: str = "1d") -> pd.Series:
+    """Long-history daily close for an index ticker (e.g. ^GSPC, ^IXIC) via Yahoo Finance.
+    Used for algorithmic bear-market detection, which needs full history rather than the
+    lookback-limited FRED SP500 series."""
+    try:
+        data = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+    except Exception:
+        return pd.Series(dtype=float)
+    if data.empty or "Close" not in data.columns:
+        return pd.Series(dtype=float)
+    close = data["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    return close.ffill().dropna()
+
+
 def fetch_ratio_data(pairs: list[tuple[str, str, str]], start: str | None = None) -> pd.DataFrame:
     """Price ratios from Yahoo: one column per (numerator, denominator, label) whose tickers both came back."""
     tickers = sorted({t for a, b, _ in pairs for t in (a, b)})

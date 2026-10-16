@@ -8,7 +8,7 @@ import config
 import data
 import news
 from conftest import ROOT
-from fakes import END, btc_prices, ladder_ratios, market_ratios
+from fakes import END, btc_prices, index_history, ladder_ratios, market_ratios
 
 APP = str(ROOT / "app.py")
 
@@ -18,10 +18,11 @@ class _Ctx:
 
 
 @pytest.fixture
-def offline_markets(monkeypatch, no_openai):
+def offline_markets(monkeypatch, no_ai):
     offline_markets = _Ctx()
     monkeypatch.setattr(data, "fetch_rotation_ladder_data", lambda start=None: ladder_ratios(start))
     monkeypatch.setattr(data, "fetch_market_ratios", lambda start=None: market_ratios(start))
+    monkeypatch.setattr(data, "fetch_index_history", index_history)
     monkeypatch.setattr(data, "fetch_bitcoin_data", lambda observation_start=None: btc_prices(observation_start))
     calls = []
 
@@ -123,3 +124,17 @@ def test_cards_charts_and_accessibility(fake_fred, offline_markets):
     # Headlines are cached, not refetched on every interaction
     at.radio[0].set_value("1 week").run()
     assert len(offline_markets.news_calls) == 1
+
+
+def test_merged_cycle_and_bear_market_sections(fake_fred, offline_markets):
+    at = run_app()
+    assert "Bitcoin Cycle Regression Model" in [h.value for h in at.header]
+    assert "Historical Bear Markets — S&P 500 / NASDAQ" in [h.value for h in at.subheader]
+    labels = {m.label for m in at.metric}
+    assert {"Drawdown from cycle top", "Drawdown from all-time high", "Bear markets on record (≥20%)"} <= labels
+    # Merged-in metrics use plain captions, not arrow deltas
+    assert not [m for m in at.metric if m.label == "Drawdown from all-time high" and m.delta]
+    # Cycle charts (x = cycle number) get no date caption; "$" ranges stay literal
+    assert not [c.value for c in at.caption if "1970" in c.value]
+    bottom = next(m.value for m in at.metric if m.label == "Model 1: projected bottom (band)")
+    assert bottom == "—" or "\\$" in bottom

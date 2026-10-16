@@ -15,6 +15,23 @@ import config
 MAX_INPUT_TOKENS = 1800
 MAX_OUTPUT_TOKENS = 800
 
+# Anthropic retires dated model IDs; alias + fallbacks avoid 404 not_found_error
+DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5"
+_MODEL_FALLBACKS = (
+    "claude-3-5-haiku-latest",
+    "claude-sonnet-4-20250514",
+)
+
+
+def claude_api_key() -> str:
+    """Anthropic key from env/.env/Streamlit Secrets: CLAUDE_API_KEY, else ANTHROPIC_API_KEY ('' if unset)."""
+    return config.get_secret("CLAUDE_API_KEY") or config.get_secret("ANTHROPIC_API_KEY")
+
+
+def _is_model_not_found(err: Exception) -> bool:
+    s = str(err).lower()
+    return "404" in str(err) or "not_found" in s or "not found" in s
+
 # Cache: key by (report_date, hash(signals + headlines))
 def _cache_key(signals: dict, news: list) -> str:
     raw = json.dumps({"s": signals, "n": [a.get("title", "") for a in news]}, sort_keys=True)
@@ -149,9 +166,9 @@ def generate_ai_summary(
         if cached:
             return cached
 
-    api_key = config.get_secret("OPENAI_API_KEY")
+    api_key = claude_api_key()
     if not api_key:
-        return None  # No key: caller can show "add OPENAI_API_KEY to Secrets"
+        return None
 
     # Build compact prompt; changes get their own section so "what changed" is grounded in real moves
     current = {k: v for k, v in signals.items() if k not in ("changes", "changes_since")}
@@ -186,15 +203,35 @@ Respond with exactly this JSON (no other text):
 }}"""
 
     try:
-        import openai
-        api = openai.OpenAI(api_key=api_key)
-        resp = api.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=MAX_OUTPUT_TOKENS,
-            temperature=0.3,
-        )
-        content = (resp.choices[0].message.content or "").strip()
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        primary = (config.get_secret("CLAUDE_MODEL") or DEFAULT_CLAUDE_MODEL).strip()
+        models_to_try = [primary]
+        for m in _MODEL_FALLBACKS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
+        content = ""
+        last_err: Exception | None = None
+        for model in models_to_try:
+            try:
+                msg = client.messages.create(
+                    model=model,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    temperature=0.3,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                block = msg.content[0]
+                content = (getattr(block, "text", "") or "").strip()
+                break
+            except Exception as e:
+                if _is_model_not_found(e):
+                    last_err = e
+                    continue
+                return {"_error": str(e)}
+        if not content:
+            return {"_error": str(last_err) if last_err else "No response from Claude"}
+
         # Extract JSON (handle optional markdown code block)
         if "```" in content:
             start = content.find("{")
@@ -227,5 +264,5 @@ Respond with exactly this JSON (no other text):
 
 
 def ai_summary_available() -> bool:
-    """True if OPENAI_API_KEY is set and we can attempt to generate a summary."""
-    return bool(config.get_secret("OPENAI_API_KEY"))
+    """True if CLAUDE_API_KEY (or ANTHROPIC_API_KEY) is set."""
+    return bool(claude_api_key())

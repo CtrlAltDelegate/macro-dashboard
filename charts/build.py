@@ -954,6 +954,117 @@ def build_market_ratios_chart(ratios: pd.DataFrame, display_start: str | None = 
     return build_curves_chart(rebased, title="Growth & Breadth (100 = window average)")
 
 
+def build_btc_cycle_loss_chart(cycle_df: pd.DataFrame, bear_model: dict, current_cycle: int) -> go.Figure | None:
+    """
+    BTC bear-market Loss % by cycle (top -> next bottom): actual bars for completed cycles,
+    fitted regression line, and a projected point + band for the current (in-progress) cycle.
+    """
+    if cycle_df is None or cycle_df.empty or not bear_model:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=cycle_df["cycle"], y=cycle_df["loss_pct"], name="Actual loss %",
+        marker=dict(color="#f85149"),
+        hovertemplate="Cycle %{x}<br>Loss: %{y:.1f}%<extra></extra>",
+    ))
+    xs = sorted(set(list(cycle_df["cycle"].tolist()) + [current_cycle]))
+    ys = [bear_model["intercept"] + bear_model["slope"] * x for x in xs]
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="lines+markers", name="Regression fit",
+        line=dict(color="#8b949e", width=2, dash="dash"),
+        hovertemplate="Cycle %{x}<br>Model: %{y:.1f}%<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[current_cycle], y=[bear_model["loss_pct"]],
+        mode="markers", name=f"Cycle {current_cycle} projected (±1σ)",
+        marker=dict(color="#d29922", size=12, symbol="diamond"),
+        error_y=dict(
+            type="data", symmetric=False,
+            array=[bear_model["loss_pct_high"] - bear_model["loss_pct"]],
+            arrayminus=[bear_model["loss_pct"] - bear_model["loss_pct_low"]],
+            color="#d29922",
+        ),
+        hovertemplate=f"Cycle {current_cycle} projected<br>Loss: %{{y:.1f}}% (±1σ band)<extra></extra>",
+    ))
+    apply_theme(fig, "BTC Bear-Market Loss % by Cycle (top → next bottom)", height=360)
+    fig.update_yaxes(title_text="Loss %")
+    fig.update_xaxes(title_text="Cycle", dtick=1)
+    return fig
+
+
+def build_btc_cycle_multiple_chart(
+    cycle_df: pd.DataFrame,
+    bull_model: dict,
+    current_cycle: int,
+    actual_current_multiple: float | None = None,
+) -> go.Figure | None:
+    """
+    BTC bull-market gain multiple by cycle (bottom -> top), log scale: actual bars for
+    completed cycles, fitted log-linear regression line, and the current cycle's actual
+    multiple plotted against the model to surface any divergence (e.g. ETF-era break).
+    """
+    if cycle_df is None or cycle_df.empty or not bull_model:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=cycle_df["cycle"], y=cycle_df["multiple"], name="Actual multiple",
+        marker=dict(color="#3fb950"),
+        hovertemplate="Cycle %{x}<br>Multiple: %{y:.1f}x<extra></extra>",
+    ))
+    xs = sorted(set(list(cycle_df["cycle"].tolist()) + [current_cycle]))
+    ys = [10 ** (bull_model["intercept"] + bull_model["slope"] * x) for x in xs]
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="lines+markers", name="Regression fit (model)",
+        line=dict(color="#8b949e", width=2, dash="dash"),
+        hovertemplate="Cycle %{x}<br>Model: %{y:.1f}x<extra></extra>",
+    ))
+    if actual_current_multiple is not None:
+        fig.add_trace(go.Scatter(
+            x=[current_cycle], y=[actual_current_multiple],
+            mode="markers", name=f"Cycle {current_cycle} actual",
+            marker=dict(color="#f0c14b", size=12, symbol="diamond"),
+            hovertemplate=f"Cycle {current_cycle} actual<br>Multiple: %{{y:.1f}}x<extra></extra>",
+        ))
+    apply_theme(fig, "BTC Bull-Market Gain Multiple by Cycle (bottom → top)", height=360)
+    fig.update_yaxes(title_text="Multiple (x)", type="log")
+    fig.update_xaxes(title_text="Cycle", dtick=1)
+    return fig
+
+
+def build_equity_drawdown_chart(price: pd.Series, bear_df: pd.DataFrame, title: str) -> go.Figure | None:
+    """
+    Long-history index price (log scale) with shaded historical bear-market regions
+    (peak -> trough, >=threshold decline). Descriptive reference only -- no regression,
+    no projected bottom, unlike the BTC cycle model.
+    """
+    if price is None or price.empty:
+        return None
+    price = price.dropna()
+    if len(price) < 2:
+        return None
+    shapes = []
+    if bear_df is not None and not bear_df.empty:
+        for _, row in bear_df.iterrows():
+            in_progress = bool(row.get("in_progress"))
+            color = "rgba(248, 81, 73, 0.30)" if in_progress else "rgba(248, 81, 73, 0.15)"
+            x1 = row["recovery_date"] if pd.notna(row.get("recovery_date")) else price.index[-1]
+            shapes.append(dict(
+                type="rect", xref="x", yref="paper",
+                x0=row["peak_date"], x1=x1, y0=0, y1=1,
+                fillcolor=color, line=dict(width=0), layer="below",
+            ))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=price.index, y=price.values, mode="lines", name="Price",
+        line=dict(color="#e6edf3", width=1.5),
+        hovertemplate="Date: %{x|%Y-%m-%d}<br>Price: %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(shapes=shapes)
+    apply_theme(fig, title, height=380)
+    fig.update_yaxes(type="log")
+    return fig
+
+
 def build_rotation_ladder_chart(ladder_ratios_df: pd.DataFrame) -> go.Figure | None:
     """Rotation ladder: z-score normalized ratios (ETH/BTC, BTC/SPY, SPY/GLD, GLD/TLT) for Tab 3."""
     if ladder_ratios_df.empty or len(ladder_ratios_df.columns) == 0:

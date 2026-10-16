@@ -83,6 +83,15 @@ def market_ratios(start: str | None = None) -> pd.DataFrame:
     return df[df.index >= pd.Timestamp(start)] if start else df
 
 
+def index_history(ticker: str, period: str = "max", interval: str = "1d") -> pd.Series:
+    """Long daily index history with two >=20% bear markets (for the equity bear-market reference)."""
+    idx = pd.bdate_range("1990-01-02", END)
+    t = np.arange(len(idx))
+    trend = np.exp(t * 0.0003)
+    dips = 1 - 0.30 * np.exp(-((t - 2500) / 150.0) ** 2) - 0.25 * np.exp(-((t - 6000) / 120.0) ** 2)
+    return pd.Series(300 * trend * dips, index=idx, name=ticker)
+
+
 def ladder_ratios(start: str | None = None) -> pd.DataFrame:
     idx = pd.bdate_range("2016-01-01", END)
     n = len(idx)

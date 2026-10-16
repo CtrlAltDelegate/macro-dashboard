@@ -83,21 +83,38 @@ def test_collect_signals_from_fake_fred(fake_fred):
 
 # ---------- AI payload / prompt
 
-def test_ai_prompt_grounds_what_changed_in_computed_changes(monkeypatch, tmp_path):
-    captured = {}
+class _FakeAnthropic:
+    """Stands in for the anthropic module: records each request, replies with JSON text.
+    Models listed in `missing` raise a 404-style error, like a retired model ID."""
 
-    class FakeCompletions:
-        def create(self, **kw):
-            captured["prompt"] = kw["messages"][0]["content"]
-            msg = types.SimpleNamespace(content=json.dumps({"executive_summary": "- ok", "what_changed": "HY spreads widened."}))
-            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    def __init__(self, reply: dict, missing: tuple = ()):
+        self.requests, self.reply, self.missing = [], reply, missing
+        fake = self
 
-    fake_openai = types.ModuleType("openai")
-    fake_openai.OpenAI = lambda api_key: types.SimpleNamespace(chat=types.SimpleNamespace(completions=FakeCompletions()))
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+        class Messages:
+            def create(self, **kw):
+                fake.requests.append(kw)
+                if kw["model"] in fake.missing:
+                    raise RuntimeError(f"Error code: 404 - not_found_error: model: {kw['model']}")
+                block = types.SimpleNamespace(type="text", text=json.dumps(fake.reply))
+                return types.SimpleNamespace(content=[block])
+
+        self.module = types.ModuleType("anthropic")
+        self.module.Anthropic = lambda api_key=None: types.SimpleNamespace(messages=Messages())
+
+
+@pytest.fixture
+def fake_claude(monkeypatch, tmp_path):
+    fake = _FakeAnthropic({"executive_summary": "- ok", "what_changed": "HY spreads widened."})
+    monkeypatch.setitem(sys.modules, "anthropic", fake.module)
     monkeypatch.setattr(config, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(config, "get_secret", lambda name: "test-key")
+    secrets = {"CLAUDE_API_KEY": "test-key"}
+    monkeypatch.setattr(config, "get_secret", lambda name: secrets.get(name, ""))
+    fake.secrets = secrets
+    return fake
 
+
+def test_ai_prompt_grounds_what_changed_in_computed_changes(fake_claude):
     shocked = Signal("HY OAS", _daily(np.r_[np.full(395, 4.0), np.full(5, 4.6)]), "%", True)
     moves = signal_changes([shocked], shocked.series.index[-8])
     payload = ai_summary.build_macro_signal_payload(
@@ -106,11 +123,33 @@ def test_ai_prompt_grounds_what_changed_in_computed_changes(monkeypatch, tmp_pat
     )
     out = ai_summary.generate_ai_summary(payload, [], "2026-10-15")
     assert out["what_changed"] == "HY spreads widened."
-    prompt = captured["prompt"]
+    request = fake_claude.requests[0]
+    assert request["model"] == ai_summary.DEFAULT_CLAUDE_MODEL
+    prompt = request["messages"][0]["content"]
     assert "CHANGES (computed from the data):" in prompt
     assert "Since 2025-07-01" in prompt and '"signal": "HY OAS"' in prompt and "+60bp" in prompt
     assert '"Sahm Rule": "0.27"' in prompt
     assert "using ONLY the CHANGES section" in prompt
+
+
+def test_ai_model_override_and_retired_model_fallback(fake_claude):
+    fake_claude.secrets["CLAUDE_MODEL"] = "claude-retired-model"
+    fake_claude.missing = ("claude-retired-model",)
+    out = ai_summary.generate_ai_summary({"macro_risk_score": 40}, [], "2026-10-15", force_refresh=True)
+    assert out["executive_summary"] == "- ok"
+    tried = [r["model"] for r in fake_claude.requests]
+    assert tried[0] == "claude-retired-model" and len(tried) == 2   # override first, then the first fallback
+
+
+def test_ai_key_lookup_and_availability(monkeypatch):
+    keys = {"ANTHROPIC_API_KEY": "anthropic-key"}
+    monkeypatch.setattr(config, "get_secret", lambda name: keys.get(name, ""))
+    assert ai_summary.claude_api_key() == "anthropic-key" and ai_summary.ai_summary_available()
+    keys["CLAUDE_API_KEY"] = "claude-key"
+    assert ai_summary.claude_api_key() == "claude-key"
+    keys.clear()
+    assert not ai_summary.ai_summary_available()
+    assert ai_summary.generate_ai_summary({"x": 1}, [], "2026-10-15", force_refresh=True) is None
 
 
 def test_changes_for_prompt_labels_size_and_direction():

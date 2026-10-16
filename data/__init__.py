@@ -11,7 +11,13 @@ from .fred_data import (
     fetch_model_input_series,
     fetch_recession_periods,
 )
-from .market_data import fetch_rotation_ladder_data, fetch_market_ratios, fetch_bitcoin_yfinance, fetch_bitcoin_data
+from .market_data import (
+    fetch_rotation_ladder_data,
+    fetch_market_ratios,
+    fetch_bitcoin_yfinance,
+    fetch_bitcoin_data,
+    fetch_index_history,
+)
 
 __all__ = [
     "fetch_fred_series",
@@ -29,4 +35,5 @@ __all__ = [
     "fetch_market_ratios",
     "fetch_bitcoin_yfinance",
     "fetch_bitcoin_data",
+    "fetch_index_history",
 ]
