@@ -4,8 +4,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# Data runs through yesterday, like live FRED data, so date-relative features ("since last issue") have data
-END = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
+# Data runs through today. Ending yesterday made "since last issue" empty whenever yesterday *was* the
+# last issue (Tue/Fri), so the "What changed" tests failed on Wednesdays and Saturdays.
+END = pd.Timestamp.today().normalize()
 
 
 def _recession_flags(n: int) -> np.ndarray:
