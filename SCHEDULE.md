@@ -78,7 +78,7 @@ Edit the task in Task Scheduler → **Triggers** → change days or time. To use
 
 # Emailed Macro Brief (GitHub Actions, Mon/Wed/Fri)
 
-`.github/workflows/brief.yml` runs `send_brief.py` at 11:00 UTC (6 AM EST / 7 AM EDT) every Mon/Wed/Fri,
+`.github/workflows/brief.yml` runs `send_brief.py` at 5 AM Eastern (year round, DST handled) every Mon/Wed/Fri,
 in the cloud, so your PC doesn't need to be on. The email body holds the whole brief as text (snapshot,
 what changed since the previous brief, AI interpretation, headlines); the PDF with charts is attached.
 Subject: `[Macro Brief] YYYY-MM-DD - Macro Risk NN/100 (Zone)`.
@@ -99,5 +99,5 @@ Subject: `[Macro Brief] YYYY-MM-DD - Macro Risk NN/100 (Zone)`.
 Locally: `python send_brief.py --dry-run` writes `exports/brief/<date>.eml` and `.html` (needs the same
 variables in `.env`; SMTP ones only when actually sending).
 
-To change the time or days, edit the `cron` line in `brief.yml` (UTC). Note: GitHub disables scheduled
+To change the time or days, edit both `cron` lines in `brief.yml` (UTC; one for EDT, one for EST) and the matching strings in its gate step. Note: GitHub disables scheduled
 workflows in repos with no activity for 60 days; re-enable from the Actions tab if that happens.
