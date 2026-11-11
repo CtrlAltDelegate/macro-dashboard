@@ -75,3 +75,29 @@ If you prefer a batch file as the task action:
 ## Changing the schedule
 
 Edit the task in Task Scheduler → **Triggers** → change days or time. To use a different lookback for the refresh, edit `refresh.py` and change the default in `run_refresh(lookback="5y")`, or pass it when running manually: `python refresh.py 10y`.
+
+# Emailed Macro Brief (GitHub Actions, Mon/Wed/Fri)
+
+`.github/workflows/brief.yml` runs `send_brief.py` at 11:00 UTC (6 AM EST / 7 AM EDT) every Mon/Wed/Fri,
+in the cloud, so your PC doesn't need to be on. The email body holds the whole brief as text (snapshot,
+what changed since the previous brief, AI interpretation, headlines); the PDF with charts is attached.
+Subject: `[Macro Brief] YYYY-MM-DD - Macro Risk NN/100 (Zone)`.
+
+## One-time setup
+
+1. **Gmail App Password**: Google Account → Security → 2-Step Verification (must be on) → App passwords →
+   create one named "Macro Brief". Copy the 16-character password.
+2. **Repo secrets**: GitHub repo → Settings → Secrets and variables → Actions → New repository secret:
+   - `FRED_API_KEY`
+   - `CLAUDE_API_KEY` (optional; without it the email has no AI section)
+   - `SMTP_USER`: the Gmail address that sends
+   - `SMTP_PASSWORD`: the App Password from step 1
+   - `BRIEF_TO`: where the brief goes
+3. **Test**: Actions tab → macro-brief → Run workflow. Tick "dry run" to build without sending and download
+   the `.eml` from the run's artifacts, or leave it unticked to send a real email now.
+
+Locally: `python send_brief.py --dry-run` writes `exports/brief/<date>.eml` and `.html` (needs the same
+variables in `.env`; SMTP ones only when actually sending).
+
+To change the time or days, edit the `cron` line in `brief.yml` (UTC). Note: GitHub disables scheduled
+workflows in repos with no activity for 60 days; re-enable from the Actions tab if that happens.
