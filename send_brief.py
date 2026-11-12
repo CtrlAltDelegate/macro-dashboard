@@ -32,6 +32,11 @@ import pandas as pd
 import config
 
 SUBJECT_TAG = "[Macro Brief]"
+# The score is a trailing-12-month percentile (models/thermostat.py), easy to misread as an absolute level
+SCORE_NOTE = ("Macro Risk is relative, not absolute: it ranks today's combined risk reading against the past "
+              "12 months (0 = lowest of the year, 100 = highest). A high score after a calm year means risk "
+              "is rising versus recent months, not necessarily that conditions are dangerous; check the "
+              "individual readings for the absolute picture.")
 BRIEF_DAYS = (0, 2, 4)  # Mon, Wed, Fri
 
 AI_SECTIONS = (
@@ -73,7 +78,7 @@ def snapshot_rows(*, thermo: pd.Series, liquidity_yoy: float | None, yield_df: p
     score = _last(thermo)
     if score is not None:
         raw["score"], raw["zone"] = score, risk_zone(score)
-        rows.append(("Macro Risk", f"{score:.0f}/100 ({raw['zone']})"))
+        rows.append(("Macro Risk", f"{score:.0f}/100 ({raw['zone']}; higher than {score:.0f}% of the past 12 months)"))
     if liquidity_yoy is not None:
         raw["liquidity_status"] = "Expanding" if liquidity_yoy >= 0 else "Contracting"
         rows.append(("Liquidity (Fed balance sheet, YoY)", f"{liquidity_yoy:+.1f}% ({raw['liquidity_status']})"))
@@ -161,7 +166,8 @@ def gather(lookback: str = "5y", *, with_pdf: bool = True) -> dict[str, Any]:
         yield_curve_momentum=snap.get("spread_roc_90"),
         credit_spread=snap.get("hy"), credit_stress_state=snap.get("credit_status"),
         financial_conditions=snap.get("fci_status"), spx_regime_zone=snap.get("zone"),
-        readings={s.label: s.fmt.format(s.series.iloc[-1]) for s in signals},
+        readings={"How to read macro_risk_score": SCORE_NOTE,
+                  **{s.label: s.fmt.format(s.series.iloc[-1]) for s in signals}},
         changes=changes_for_prompt(moves), changes_since=f"{since:%Y-%m-%d}",
     )
     ai = generate_ai_summary(payload, headlines, today.date().isoformat())
@@ -236,7 +242,8 @@ def _build_pdf(brief, lookback, val_full, risk_full, risk_df, yield_df, liquidit
 
 def subject(brief: dict) -> str:
     snap = brief["snapshot"]
-    tail = f" - Macro Risk {snap['score']:.0f}/100 ({snap['zone']})" if snap.get("score") is not None else ""
+    tail = (f" - Macro Risk {snap['score']:.0f}/100 vs. past year ({snap['zone']})"
+            if snap.get("score") is not None else "")
     return f"{SUBJECT_TAG} {brief['date']}{tail}"
 
 
@@ -247,7 +254,8 @@ def _since_text(brief: dict) -> str:
 
 def render_text(brief: dict) -> str:
     out = [f"MACRO BRIEF - {brief['date']}", ""]
-    out += ["SNAPSHOT"] + [f"- {k}: {v}" for k, v in brief["snapshot"]["rows"]] + [""]
+    out += ["SNAPSHOT"] + [f"- {k}: {v}" for k, v in brief["snapshot"]["rows"]]
+    out += [f"Note: {SCORE_NOTE}", ""]
     out.append(f"WHAT CHANGED SINCE {_since_text(brief).upper()}")
     if brief["changes"]:
         for c in brief["changes"]:
@@ -286,6 +294,7 @@ def render_html(brief: dict) -> str:
     rows = "".join(f"<tr><td style='padding:2px 12px 2px 0'><b>{e(k)}</b></td><td>{e(v)}</td></tr>"
                    for k, v in brief["snapshot"]["rows"])
     parts = [f"<h2>Macro Brief - {e(brief['date'])}</h2>", "<h3>Snapshot</h3>", f"<table>{rows}</table>",
+             f"<p style='color:#555;font-size:13px'><i>{e(SCORE_NOTE)}</i></p>",
              f"<h3>What changed since {e(_since_text(brief))}</h3>"]
     if brief["changes"]:
         head = "<tr><th align='left'>Signal</th><th align='left'>Now</th><th align='left'>Change</th>" \

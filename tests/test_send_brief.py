@@ -34,12 +34,13 @@ def _brief(ai=True, changes=True):
 
 def test_message_has_text_html_and_pdf():
     msg = send_brief.build_message(_brief(), "me@example.com", "me@example.com")
-    assert msg["Subject"] == "[Macro Brief] 2026-11-16 - Macro Risk 41/100 (Moderate Risk)"
+    assert msg["Subject"] == "[Macro Brief] 2026-11-16 - Macro Risk 41/100 vs. past year (Moderate Risk)"
     assert email.message_from_bytes(bytes(msg)).is_multipart()   # serializes cleanly
     msg_text = msg.get_body(("plain",)).get_content()
     msg_html = msg.get_body(("html",)).get_content()
     for body in (msg_text, msg_html):
         assert "HY OAS" in body and "+12bp" in body and "Credit widening" in body
+        assert "relative, not absolute" in body and "past 12 months" in body
         assert "Sat" not in body
     assert "WHAT CHANGED SINCE FRI NOV 13" in msg_text
     assert "&lt;rates&gt;" in msg_html                      # headlines are escaped
@@ -61,8 +62,9 @@ def test_gather_offline(fake_fred, no_ai, monkeypatch):
     import news
     monkeypatch.setattr(news, "fetch_recent_macro_news", lambda **k: [])
     brief = send_brief.gather("5y", with_pdf=False)
-    labels = [k for k, _ in brief["snapshot"]["rows"]]
-    assert "Macro Risk" in labels and "Yield Curve (10Y-3M)" in labels
+    rows = dict(brief["snapshot"]["rows"])
+    assert "Macro Risk" in rows and "Yield Curve (10Y-3M)" in rows
+    assert rows["Macro Risk"].endswith("of the past 12 months)")
     assert brief["ai"] is None and brief["pdf"] is None
     text = send_brief.render_text(brief)
     assert text.startswith("MACRO BRIEF") and "SNAPSHOT" in text
