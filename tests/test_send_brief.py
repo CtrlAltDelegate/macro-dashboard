@@ -76,3 +76,21 @@ def test_dry_run_needs_no_smtp(fake_fred, no_ai, monkeypatch, tmp_path):
     monkeypatch.delenv("SMTP_USER", raising=False)
     assert send_brief.main(["--dry-run", "--no-pdf"]) == 0
     assert list((tmp_path / "brief").glob("*.eml"))
+
+
+def test_dry_run_output_has_no_real_addresses(fake_fred, no_ai, monkeypatch, tmp_path):
+    """Dry-run files become public workflow artifacts, so they must not contain the real addresses."""
+    import config
+    import news
+    monkeypatch.setattr(news, "fetch_recent_macro_news", lambda **k: [])
+    monkeypatch.setattr(config, "EXPORTS_DIR", tmp_path)
+    monkeypatch.setenv("SMTP_USER", "real.sender@gmail.com")
+    monkeypatch.setenv("BRIEF_TO", "real.inbox@gmail.com")
+    assert send_brief.main(["--dry-run", "--no-pdf"]) == 0
+    for f in (tmp_path / "brief").iterdir():
+        text = f.read_bytes().decode("utf-8", "replace")
+        assert "real.sender" not in text and "real.inbox" not in text, f.name
+    sent = []
+    monkeypatch.setattr(send_brief, "send", sent.append)
+    assert send_brief.main(["--no-pdf"]) == 0                 # a real send still uses the real addresses
+    assert sent[0]["From"] == "real.sender@gmail.com" and sent[0]["To"] == "real.inbox@gmail.com"

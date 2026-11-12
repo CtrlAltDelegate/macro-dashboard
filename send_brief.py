@@ -362,15 +362,17 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f"Brief failed: {e}", file=sys.stderr)
         return 1
-    msg = build_message(brief, sender or "brief@localhost", args.to or "you@localhost")
-
     if args.dry_run:
+        # Placeholder addresses: dry-run output is uploaded as a workflow artifact, which is public in a
+        # public repo (secret masking covers logs, not artifacts).
+        msg = build_message(brief, "sender@example.com", "recipient@example.com")
         out = config.EXPORTS_DIR / "brief"
         out.mkdir(parents=True, exist_ok=True)
         (out / f"{brief['date']}.eml").write_bytes(bytes(msg))
         (out / f"{brief['date']}.html").write_text(render_html(brief), encoding="utf-8")
         print(f"Dry run: wrote {out / brief['date']}.eml/.html  Subject: {msg['Subject']}")
         return 0
+    msg = build_message(brief, sender, args.to)
     send(msg)
     print(f"Sent: {msg['Subject']}")
     return 0
